@@ -42,7 +42,7 @@ contrastive learning (https://arxiv.org/pdf/2004.11362.pdf),
 SimCSE (https://arxiv.org/pdf/2104.08821.pdf), multi-task learning and
 fine-tuning strategies, such as freezing encoder layers.
 The models I fine-tuned as well as the hyperparameter settings are listed in
-the configuration files inside the `configs` directory.
+the configuration files inside the [configs directory](configs).
 
 The Sentence-BERT model fine-tuned with a multi-task objective that
 incorporated both the sentiment label and the valence score achieved an
@@ -56,8 +56,8 @@ Install the required packages by running the following command:
 pip install -r requirements.txt
 ```
 
-To fine-tune a model, run the `main.py` script with the corresponding configuration
-files from the `configs` directory. For example, to train a Sentence-BERT
+To fine-tune a model, run the [main.py](twitter/main.py) script with the corresponding configuration
+files from the [configs](configs). For example, to train a Sentence-BERT
 model for classification run the following command from the root directory of
 the repo:
 
@@ -78,18 +78,18 @@ tensorboard --logdir lightning_logs
 ## Structure
 The code is structured as follows:
 
-- `twitter/`: Contains the main code for the project
-    - `augmentation.py`: Implementation of different augmentation strategies
-    - `data.py`: Data processing and loading
-    - `main.py`: Main script for enabling lightning CLI
-    - `models.py`: Building blocks for the different models
-    - `modules.py`: Lightning modules for training and evaluation
-    - `split.py`: Code for splitting the dataset into train, validation and test sets
-    - `svm.py`: Code training SVM models to incorporate the meta-data
-    - `unsupervised.py`: Additional analysis that identifies clusters with large positive or negative sentiments
-    - `utils.py`: Utility functions, such as losses and preprocessing
-- `configs/`: Contains the configuration files for the different models
-    - `encoders/`: Configuration files for the different encoders from the `transformers` library
-    - `tasks/`: Configuration files for the different tasks, such as classification, regression, contrastive learning, etc.
-    - `data.yaml`: Configuration files for any data related hyperparameters
-    - `defaults.yaml`: Default configuration file, mostly for the lightning trainer
+- [`twitter/`](twitter/): Contains the main code for the project
+    - [`augmentation.py`](twitter/augmentation.py): Implementation of different augmentation strategies
+    - [`data.py`](twitter/data.py): Data processing and loading
+    - [`main.py`](twitter/main.py): Main script for enabling lightning CLI
+    - [`models.py`](twitter/models.py): Building blocks for the different models
+    - [`modules.py`](twitter/modules.py): Lightning modules for training and evaluation
+    - [`split.py`](twitter/split.py): Code for splitting the dataset into train, validation and test sets
+    - [`svm.py`](twitter/svm.py): Code training SVM models to incorporate the meta-data
+    - [`unsupervised.py`](twitter/unsupervised.py): Additional analysis that identifies clusters with large positive or negative sentiments
+    - [`utils.py`](twitter/.py): Utility functions, such as losses and preprocessing
+- [`configs/`](configs/): Contains the configuration files for the different models
+    - [`encoders/`](configs/encoders/): Configuration files for the different encoders from the `transformers` library
+    - [`tasks/`](configs/tasks/): Configuration files for the different tasks, such as classification, regression, contrastive learning, etc.
+    -[`data.yaml`](configs/data.yaml): Configuration files for any data related hyperparameters
+    - [`defaults.yaml`](configs/defaults.yaml): Default configuration file, mostly for the lightning trainer
