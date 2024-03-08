@@ -1,0 +1,10 @@
+# lightning.pytorch==2.0.1.post0
+model:
+  init_args:
+    encoder:
+      class_path: twitter.models.TransformerEncoder
+      init_args:
+        name: "bhadresh-savani/distilbert-base-uncased-emotion"
+        pooling: "mean"
+    lr: {"encoder": 3e-5, "head": 3e-4}
+    weight_decay: 0.01

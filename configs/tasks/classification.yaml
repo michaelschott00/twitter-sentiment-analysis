@@ -1,0 +1,20 @@
+model:
+  class_path: twitter.modules.SingleTaskModule
+  init_args:
+    task: "clf"
+    # class_weights: [5.40084388, 0.50793651, 1.18190212,]
+data:
+  init_args:
+    labels: "clf"
+trainer:
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.early_stopping.EarlyStopping
+      init_args:
+        monitor: "MulticlassF1Score"
+        mode: "max"
+        patience: 3
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        save_top_k: 1
+        monitor: "MulticlassF1Score"
+        mode: "max"

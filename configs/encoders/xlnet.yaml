@@ -1,0 +1,12 @@
+# lightning.pytorch==2.0.1.post0
+model:
+  init_args:
+    encoder:
+      class_path: twitter.models.TransformerEncoder
+      init_args:
+        name: "pig4431/TweetEval_XLNET_5E"
+    lr: {"encoder": 3e-5, "head": 3e-4}
+    weight_decay: 0.01
+    pooling: "last"
+    # freeze_cfg: {1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8], 5: [9, 10]}
+    # reset_last: 2

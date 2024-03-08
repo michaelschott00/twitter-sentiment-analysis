@@ -1,0 +1,20 @@
+model:
+  class_path: twitter.modules.SingleTaskModule
+  init_args:
+    task: "reg"
+data:
+  init_args:
+    labels: "reg"
+trainer:
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.early_stopping.EarlyStopping
+      init_args:
+        monitor: "MeanSquaredError"
+        mode: "min"
+        patience: 3
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        save_top_k: 1
+        monitor: "MeanSquaredError"
+        mode: "min"
+

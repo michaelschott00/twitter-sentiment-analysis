@@ -1,0 +1,9 @@
+data:
+  class_path: twitter.data.TwitterDataModule
+  init_args:
+    root_dir: "data/splits/"
+    features: "text"
+    batch_size: 32
+    labels: "none"
+    class_sample_weights: null
+    normalize: true

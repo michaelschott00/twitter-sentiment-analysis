@@ -1,0 +1,11 @@
+model:
+  class_path: twitter.modules.SupervisedConstrastiveLearningModule
+  init_args:
+    loss_weight: 0.9
+    temperature: 0.3
+    # class_weights: [5.40084388, 0.50793651, 1.18190212,]
+data:
+  class_path: twitter.data.TwitterDataModule
+  init_args:
+    features: "contrast"
+    labels: "clf"

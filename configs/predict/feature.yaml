@@ -1,0 +1,3 @@
+trainer:
+  callbacks:
+    - class_path: twitter.util.FeatureWriter

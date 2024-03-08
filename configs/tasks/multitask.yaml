@@ -1,0 +1,20 @@
+model:
+  class_path: twitter.modules.MultiTaskModule
+  init_args:
+    loss_weight: 0.8
+data:
+  init_args:
+    labels: "both"
+trainer:
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        save_top_k: 1
+        monitor: "MulticlassF1Score"
+        mode: "max"
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        save_top_k: 1
+        monitor: "MeanSquaredError"
+        mode: "min"
+
