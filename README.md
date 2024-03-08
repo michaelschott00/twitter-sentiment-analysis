@@ -6,6 +6,8 @@ The project is about sentiment analysis on AI- and Machine Learning related Twit
 the goal is to classify tweets as positive, negative or neutral.
 
 ## Data
+
+### Overview
 The dataset for this project was a collection of 8000 AI- and machine
 learning- related tweets labeled with a sentiment (positive, negative, neutral)
 as well as a valence score between -1 and 1. It additionally contained
@@ -13,12 +15,24 @@ meta-data, such as `like_count` or `reply_count`. In general, most of the tweets
 were neutral and the negative class was heavily underrepresented, making up
 only 6% of the dataset.
 
-![Sentiment Distribution](./images/label_plot.png)
+<p align="center"><img src="./images/label_plot.png" width="400"></p>
 
 additionally, the valence score did not perfectly align with the sentiment label,
 as can be seen in the following plot:
 
-![Valence Distribution](./images/scores.png)
+<p align="center"><img src="./images/scores.png" width="400"></p>
+
+### Topic Analysis
+Inspired by https://nkoenig06.github.io/gd-tm-cluster.html, I ran a
+topic analysis using a Gaussian Mixture Model on TF-IDF vectors of the tweets. The table below
+shows three tweets from the resulting most negative-, neutral- or positive clusters:
+
+|Sentiment|Examples of Tweets|
+|-|-|
+|Neutral|1. @EpiEllie @ProfMattFox "faithfulness" is assum..., <br> 2. "risk factors", "odd ratios" "correlation" "at..., <br> 3. In examining the causal inference papers publi...|
+|Negative|1. Back to School With Antisemites https://t.co/d..., <br> 2. Please note, all Jew-haters deny that they are..., <br> 3. @DavidHirsh We have allowed antizionists to co...|
+|Positive|1. Congratulations @koraykv !!! https://t.co/keh8..., <br> 2. RT CRA WP: Join us in celebrating the Skip El..., <br> 3. Congrats to the 76 founders who will be receiv...|
+
 
 ## Models
 The code in this repo allows fine-tuning
