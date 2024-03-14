@@ -35,14 +35,13 @@ shows three tweets from the resulting most negative-, neutral- or positive clust
 
 
 ## Models
-The code in this repo allows fine-tuning
-transformer-based models from the `transformers` library on the dataset as
-well as evaluating their performance. It additionally implements supervised
-contrastive learning (https://arxiv.org/pdf/2004.11362.pdf),
-SimCSE (https://arxiv.org/pdf/2104.08821.pdf), multi-task learning and
-fine-tuning strategies, such as freezing encoder layers.
-The models I fine-tuned as well as the hyperparameter settings are listed in
-the configuration files inside the [configs directory](configs).
+The code in this repo implements the following:
+
+- fine-tuning and evaluating the performance of several transformer models from the `transformers` library on the dataset
+- supervised contrastive learning (https://arxiv.org/pdf/2004.11362.pdf),
+- SimCSE (https://arxiv.org/pdf/2104.08821.pdf)
+- multi-task learning
+- interface for annotating the dataset with sentiment labels to check human performance on this task
 
 The Sentence-BERT model fine-tuned with a multi-task objective that
 incorporated both the sentiment label and the valence score achieved an
@@ -50,11 +49,15 @@ F1-score of 0.79 and earned the second place in the course competition.
 
 ## Usage
 
+### Requirements
 Install the required packages by running the following command:
 
 ```bash
 pip install -r requirements.txt
 ```
+
+### Training
+Set hyperparameters in the configuration files in the [configs directory](configs).
 
 To fine-tune a model, run the [main.py](twitter/main.py) script with the corresponding configuration
 files from the [configs](configs). For example, to train a Sentence-BERT
@@ -67,6 +70,7 @@ python -m twitter.main \
     --config configs/encoders/sentence_bert_base.yaml
 ```
 
+### Evaluation
 During training, the script will log the training and validation loss, as well as
 additional information, such as high-confidence errors to `tensorboard`.
 These can be inspected by running the following command:
@@ -75,12 +79,20 @@ These can be inspected by running the following command:
 tensorboard --logdir lightning_logs
 ```
 
+### Labeling
+The interface for labelling the dataset is implemented using the gradio library. To start the interface, run the following command:
+
+```bash
+gradio twitter.label_game
+```
+
 ## Structure
 The code is structured as follows:
 
 - [`twitter/`](twitter/): Contains the main code for the project
     - [`augmentation.py`](twitter/augmentation.py): Implementation of different augmentation strategies
     - [`data.py`](twitter/data.py): Data processing and loading
+    - [ `label_game.py`](twitter/label_game.py): Interface for annotating the dataset with sentiment labels
     - [`main.py`](twitter/main.py): Main script for enabling lightning CLI
     - [`models.py`](twitter/models.py): Building blocks for the different models
     - [`modules.py`](twitter/modules.py): Lightning modules for training and evaluation

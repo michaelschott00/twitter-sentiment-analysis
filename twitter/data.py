@@ -71,7 +71,7 @@ class _BaseDataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> Tuple[Dict[str, int | str], Dict[str, int | float] | None]:
+    def __getitem__(self, idx: int) -> Tuple[Dict[str, Union[int, str]], Dict[str, Union[int, float, None]]]:
         """Returns a single observation from the dataset.
 
         Args:

@@ -15,4 +15,4 @@ tensorboard
 jsonargparse[signatures]
 omegaconf
 sacremoses
-pyocclient
+gradio

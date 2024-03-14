@@ -3,7 +3,7 @@ data:
   init_args:
     root_dir: "data/splits/"
     features: "text"
-    batch_size: 32
+    batch_size: 8
     labels: "none"
     class_sample_weights: null
     normalize: true
