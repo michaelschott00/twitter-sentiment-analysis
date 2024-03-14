@@ -3,11 +3,10 @@
 
 This repo contains the code I wrote for the project from the Machine Learning Core Lecture at Saarland University.
 The project is about sentiment analysis on AI- and Machine Learning related Twitter data and
-the goal is to classify tweets as positive, negative or neutral.
+the goal is to classify tweets as positive, negative or neutral as well as predict a valence score between -1 and 1.
 
 ## Data
 
-### Overview
 The dataset for this project was a collection of 8000 AI- and machine
 learning- related tweets labeled with a sentiment (positive, negative, neutral)
 as well as a valence score between -1 and 1. It additionally contained
@@ -22,7 +21,7 @@ as can be seen in the following plot:
 
 <p align="center"><img src="./images/scores.png" width="400"></p>
 
-### Topic Analysis
+## Topic Analysis
 Inspired by https://nkoenig06.github.io/gd-tm-cluster.html, I ran a
 topic analysis using a Gaussian Mixture Model on TF-IDF vectors of the tweets. The table below
 shows three tweets from the resulting most negative-, neutral- or positive clusters:
@@ -71,19 +70,19 @@ python -m twitter.main \
 ```
 
 ### Evaluation
-During training, the script will log the training and validation loss, as well as
-additional information, such as high-confidence errors to `tensorboard`.
+During training, the script will log training and validation metrics, as well as
+additional information, such as high-confidence errors and confusion matrices to `tensorboard`.
 These can be inspected by running the following command:
 
 ```bash
 tensorboard --logdir lightning_logs
 ```
 
-### Labeling
+## Labeling
 The interface for labelling the dataset is implemented using the gradio library. To start the interface, run the following command:
 
 ```bash
-gradio twitter.label_game
+gradio twitter/label_game.py
 ```
 
 ## Structure
@@ -92,7 +91,7 @@ The code is structured as follows:
 - [`twitter/`](twitter/): Contains the main code for the project
     - [`augmentation.py`](twitter/augmentation.py): Implementation of different augmentation strategies
     - [`data.py`](twitter/data.py): Data processing and loading
-    - [ `label_game.py`](twitter/label_game.py): Interface for annotating the dataset with sentiment labels
+    - [`label_game.py`](twitter/label_game.py): Interface for annotating the dataset with sentiment labels
     - [`main.py`](twitter/main.py): Main script for enabling lightning CLI
     - [`models.py`](twitter/models.py): Building blocks for the different models
     - [`modules.py`](twitter/modules.py): Lightning modules for training and evaluation
@@ -103,5 +102,5 @@ The code is structured as follows:
 - [`configs/`](configs/): Contains the configuration files for the different models
     - [`encoders/`](configs/encoders/): Configuration files for the different encoders from the `transformers` library
     - [`tasks/`](configs/tasks/): Configuration files for the different tasks, such as classification, regression, contrastive learning, etc.
-    -[`data.yaml`](configs/data.yaml): Configuration files for any data related hyperparameters
+    - [`data.yaml`](configs/data.yaml): Configuration files for any data related hyperparameters
     - [`defaults.yaml`](configs/defaults.yaml): Default configuration file, mostly for the lightning trainer
