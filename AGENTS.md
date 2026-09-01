@@ -1,0 +1,3 @@
+- This environment is a docker container built from `Dockerfile` and `compose.yaml` in this directory. All changes to the environment should be documented in these files for future runs. The `docker` command itself is not available.
+- Install python packages with `--break-system-packages`. Add any installed packages to `requirements.txt`.
+- Use `pytest` for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.

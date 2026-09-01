@@ -1,0 +1,8 @@
+services:
+  dev:
+    build: .
+    volumes:
+      - .:/workspace
+      - ~/.hermes:/hermes
+    environment:
+      - HERMES_HOME=/hermes

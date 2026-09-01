@@ -1,7 +1,3 @@
-torch
-torchvision
-torchtext
-torchaudio
 matplotlib
 scikit-learn
 pandas
@@ -16,3 +12,8 @@ jsonargparse[signatures]
 omegaconf
 sacremoses
 gradio
+ruff
+basedpyright
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchtext
