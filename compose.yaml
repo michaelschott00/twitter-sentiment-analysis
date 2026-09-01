@@ -3,6 +3,6 @@ services:
     build: .
     volumes:
       - .:/workspace
-      - ~/.hermes:/hermes
+      - ~/.hermes:/home/agent/.hermes
     environment:
-      - HERMES_HOME=/hermes
+      - HERMES_HOME=/home/agent/.hermes

@@ -1,16 +1,20 @@
 """This script exports modules for on-the-fly augmentation and can also be run to generate a csv file of augmented data."""
 
-import random
-from typing import List, Tuple, Dict
-
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, FSMTForConditionalGeneration, FSMTTokenizer
-import torch
-from torch import nn
-import pandas as pd
 import os
-from tqdm import tqdm
-from nltk.corpus import wordnet, stopwords
+import random
+
 import nltk
+import pandas as pd
+import torch
+from nltk.corpus import stopwords, wordnet
+from torch import nn
+from tqdm import tqdm
+from transformers import (
+    FSMTForConditionalGeneration,
+    FSMTTokenizer,
+    pipeline,
+)
+
 from twitter import util
 
 try:
@@ -53,7 +57,7 @@ class BackTranslation(nn.Module):
         self.bwd_tokenizer = FSMTTokenizer.from_pretrained(de_en_name)
         self.bwd_translator = FSMTForConditionalGeneration.from_pretrained(de_en_name).eval().to(self.device)
 
-    def forward(self, batch: Tuple[List[str], Dict[str, torch.Tensor]]) -> List[str]:
+    def forward(self, batch: tuple[list[str], dict[str, torch.Tensor]]) -> list[str]:
         input_texts = batch[0]
 
         # forward translation
@@ -84,7 +88,7 @@ class RandomInsertion(nn.Module):
         self.n = n
         self.unmasker = pipeline('fill-mask', model='bert-base-cased', device=0)
 
-    def forward(self, input_texts: List[str]):
+    def forward(self, input_texts: list[str]):
         augmented_texts = input_texts
         for i in range(self.n):
             texts_with_mask = []
@@ -171,7 +175,7 @@ class TextGeneration(nn.Module):
 
 # based on https://github.com/jasonwei20/eda_nlp/blob/master/code/eda.py
 
-def get_synonyms(word: str) -> List[str]:
+def get_synonyms(word: str) -> list[str]:
     synonyms = set()
     for syn in wordnet.synsets(word):
         for lemma in syn.lemmas():
@@ -309,8 +313,9 @@ class EDA(nn.Module):
 
 
 if __name__ == '__main__':
-    from twitter import data
     import argparse
+
+    from twitter import data
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--augmentation', type=str, default='random_insertion', help='augmentation method')

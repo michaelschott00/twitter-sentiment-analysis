@@ -1,17 +1,17 @@
-from typing import Literal, Callable, Tuple, List, Dict, Union
 import os
+from collections.abc import Callable
+from typing import Literal
 
 import lightning.pytorch as pl
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-import pandas as pd
-from transformers import AutoTokenizer
-import torch
 import numpy as np
+import pandas as pd
+import torch
 from torch import nn
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from transformers import AutoTokenizer
 
-from twitter.util import TweetNormalizer, WordsToSentence
 from twitter.augmentation import EDA
-
+from twitter.util import TweetNormalizer, WordsToSentence
 
 ################################
 #                              #
@@ -20,8 +20,8 @@ from twitter.augmentation import EDA
 ################################
 
 # these are required for submitting predictions in the correct format
-LABEL_CODING: Dict[str, int] = {'negative': 0, 'neutral': 1, 'positive': 2}
-INVERSE_LABEL_CODING: Dict[int, str] = {v: k for k, v in LABEL_CODING.items()}
+LABEL_CODING: dict[str, int] = {'negative': 0, 'neutral': 1, 'positive': 2}
+INVERSE_LABEL_CODING: dict[int, str] = {v: k for k, v in LABEL_CODING.items()}
 
 
 ################################
@@ -71,7 +71,7 @@ class _BaseDataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> Tuple[Dict[str, Union[int, str]], Dict[str, Union[int, float, None]]]:
+    def __getitem__(self, idx: int) -> tuple[dict[str, int | str], dict[str, int | float | None]]:
         """Returns a single observation from the dataset.
 
         Args:
@@ -89,6 +89,11 @@ class _BaseDataset(Dataset):
             return dict(X), None
 
 
+# Backwards compatibility: tests import _TwitterBaseDataset
+_TwitterBaseDataset = _BaseDataset
+_TwitterDataset = _BaseDataset
+
+
 class TextDataset(_BaseDataset):
     """A Dataset only containing the text column without the metadata."""
 
@@ -101,7 +106,7 @@ class TextDataset(_BaseDataset):
         self.preprocessing = preprocessing
         self.augmentation = augmentation
 
-    def __getitem__(self, idx: int) -> Tuple[str, Dict[str, Union[int, float]]]:
+    def __getitem__(self, idx: int) -> tuple[str, dict[str, int | float]]:
         X, y = super().__getitem__(idx)
         X = X["text"]
         if self.augmentation:
@@ -114,7 +119,7 @@ class TextDataset(_BaseDataset):
 class RegressionTextDataset(TextDataset):
     """A Dataset for the regression task, which only contains the text and the compound score."""
 
-    def __getitem__(self, idx) -> Tuple[str, float]:
+    def __getitem__(self, idx) -> tuple[str, float]:
         X, y = super().__getitem__(idx)
         return X, y["score_compound"]
 
@@ -122,7 +127,7 @@ class RegressionTextDataset(TextDataset):
 class ClassificationTextDataset(TextDataset):
     """A Dataset for the classification task, which only contains the text and the sentiment label."""
 
-    def __getitem__(self, idx: int) -> Tuple[str, int]:
+    def __getitem__(self, idx: int) -> tuple[str, int]:
         X, y = super().__getitem__(idx)
         return X, y["sentiment"]
 
@@ -131,10 +136,10 @@ class SCLTextDataset(TextDataset):
     """A dataset for contrastive learning, which returns two augmented views of the same text. This only supports the classification labels, because
     contrastive learning requires class labels."""
 
-    def __init__(self, augmentation: Callable, *args, **kwargs) -> None:
+    def __init__(self, augmentation: Callable = None, *args, **kwargs) -> None:
         super().__init__(augmentation=augmentation, *args, **kwargs)
 
-    def __getitem__(self, idx: int) -> Tuple[Tuple[str, str], Dict[str, int]]:
+    def __getitem__(self, idx: int) -> tuple[tuple[str, str], dict[str, int]]:
         # get two different augmented views due to randomness
         X_1, _ = super().__getitem__(idx)
         X_2, y = super().__getitem__(idx)
@@ -178,24 +183,25 @@ class ExternalTextDataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> Tuple[str, Dict[str, Union[int, float]]]:
+    def __getitem__(self, idx: int) -> tuple[str, dict[str, int | float]]:
         observation = self.df.iloc[idx]
         X = observation[self.text_column]
         if self.augmentation is not None:
             X = self.augmentation(X)
         if self.preprocessing is not None:
             X = self.preprocessing(X)
+        y: dict[str, int | float] = {}
         if "sentiment" in observation:
-            y = {"sentiment": observation["sentiment"]}
+            y["sentiment"] = observation["sentiment"]
         if "score_compound" in observation:
-            y = {"score_compound": observation["score_compound"]}
+            y["score_compound"] = observation["score_compound"]
         return X, y
 
 
 class ExternalRegressionTextDataset(ExternalTextDataset):
     """A dataset for external data for the regression task, which only contains the text and the compound score."""
 
-    def __getitem__(self, idx: int) -> Tuple[str, float]:
+    def __getitem__(self, idx: int) -> tuple[str, float]:
         X, y = super().__getitem__(idx)
         return X, y["score_compound"]
 
@@ -203,7 +209,7 @@ class ExternalRegressionTextDataset(ExternalTextDataset):
 class ExternalClassificationTextDataset(ExternalTextDataset):
     """A dataset for external data for the classification task, which only contains the text and the sentiment."""
 
-    def __getitem__(self, idx: int) -> Tuple[str, int]:
+    def __getitem__(self, idx: int) -> tuple[str, int]:
         X, y = super().__getitem__(idx)
         return X, y["sentiment"]
 
@@ -232,7 +238,7 @@ class TwitterDataModule(pl.LightningDataModule):
 
         # hparams
         batch_size: int = 32,
-        class_sample_weights: Tuple[float, float, float] = None,  # negative, neutral, positive
+        class_sample_weights: tuple[float, float, float] = None,  # negative, neutral, positive
 
         # transforms
         normalize: bool = False,
@@ -242,7 +248,7 @@ class TwitterDataModule(pl.LightningDataModule):
         drop_mismatched_labels: bool = False,
 
         # computationally intensive augmentations (path to csv)
-        external_data_paths: List[str] = None,
+        external_data_paths: list[str] = None,
 
         # easy data augmentations
         eda: bool = False,
@@ -377,13 +383,20 @@ class TwitterDataModule(pl.LightningDataModule):
                 samples_weight = torch.from_numpy(np.array([self.hparams.class_sample_weights[t] for t in labels]))
             elif self.hparams.labels == "both":
                 samples_weight = torch.from_numpy(np.array([self.hparams.class_sample_weights[int(t[1])] for t in labels]))
-            sampler = WeightedRandomSampler(samples_weight.type('torch.DoubleTensor'), len(samples_weight))
+            else:
+                samples_weight = None
+            if samples_weight is not None:
+                sampler = WeightedRandomSampler(samples_weight.double(), len(samples_weight))
+
+        # handle ConcatDataset when external data is concatenated
+        base_cls = getattr(self.twitter_train, "datasets", [self.twitter_train])[0].__class__ if isinstance(self.twitter_train, torch.utils.data.ConcatDataset) else self.twitter_train.__class__
+        collate_fn = self.collate_fn_map.get(base_cls, self.collate_fn_map.get(self.twitter_train.__class__))
 
         return DataLoader(self.twitter_train,
                           batch_size=self.hparams.batch_size,
                           shuffle=sampler is None,
                           sampler=sampler,
-                          collate_fn=self.collate_fn_map[self.twitter_train.__class__])
+                          collate_fn=collate_fn)
 
     def val_dataloader(self):
         return DataLoader(self.twitter_dev,

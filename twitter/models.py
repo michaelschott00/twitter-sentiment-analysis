@@ -1,26 +1,24 @@
-from typing import List, Literal
+from typing import Literal
 
 import torch
-from torch import nn
 import torch.nn.functional as F
-from transformers import AutoModel, AutoConfig, AutoTokenizer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.svm import SVC, SVR
+from torch import nn
 from torchmetrics import MetricCollection
 from torchmetrics.classification import (
     MulticlassAccuracy,
+    MulticlassConfusionMatrix,
     MulticlassF1Score,
     MulticlassPrecision,
     MulticlassRecall,
-    MulticlassConfusionMatrix
 )
 from torchmetrics.regression import MeanSquaredError
-from sklearn.svm import SVC, SVR
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.model_selection import GridSearchCV
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 from twitter import util
-
 
 ################################
 #                              #
@@ -70,7 +68,7 @@ class TransformerEncoder(nn.Module):
         if freeze:
             self.freeze(list(range(len(self.encoder.encoder.layer))))
 
-    def freeze(self, layers: List[int], unfreeze: bool = False):
+    def freeze(self, layers: list[int], unfreeze: bool = False):
         """Freezes the given layers."""
         for i in range(len(self.encoder.encoder.layer)):
             if i in layers:
@@ -111,7 +109,7 @@ class TransformerRegressor(nn.Module):
 class TransformerClassifier(nn.Module):
     """Adds a classification head, classification loss and classification metrics to a transformer encoder."""
 
-    def __init__(self, encoder: TransformerEncoder, class_weights: List[float] = None):
+    def __init__(self, encoder: TransformerEncoder, class_weights: list[float] = None):
         super().__init__()
 
         self.encoder = encoder
@@ -158,10 +156,11 @@ class TransformerClassifier(nn.Module):
 class Projector(nn.Module):
     """A simple projection head for contrastive learning. This projects the embeddings into a different space, where they are compared."""
 
-    def __init__(self):
+    def __init__(self, hidden_size: int = 768):
+        super().__init__()
         self.model = nn.Sequential(
             nn.Dropout1d(),
-            nn.Linear(self.encoder.config.hidden_size, 2048),
+            nn.Linear(hidden_size, 2048),
             nn.BatchNorm1d(2048),
             nn.ReLU(),
             nn.Linear(2048, 128),
@@ -195,7 +194,7 @@ class SupervisedContrastiveEncoder(nn.Module):
 class SupervisedContrastiveClassifier(nn.Module):
     """Adds classification head, classification loss and classification metrics to a supervised contrastive encoder."""
 
-    def __init__(self, encoder: TransformerEncoder, class_weights: List[float] = None, temperature: float = 1.0):
+    def __init__(self, encoder: TransformerEncoder, class_weights: list[float] = None, temperature: float = 1.0):
         super().__init__()
         self.encoder = SupervisedContrastiveEncoder(encoder=encoder)
         self.tokenizer = self.encoder.tokenizer

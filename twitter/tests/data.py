@@ -1,9 +1,11 @@
-from twitter import data
-from twitter.data import _TwitterBaseDataset, TwitterDataModule
-import unittest
-import numpy as np
 import random
+import unittest
+
+import numpy as np
 import torch
+
+from twitter import data
+from twitter.data import TwitterDataModule, _TwitterBaseDataset
 
 
 class TestBaseDataset(unittest.TestCase):
@@ -51,7 +53,7 @@ class ModuleTests(unittest.TestCase):
         self.data_module = TwitterDataModule(
             root_dir="data/splits",
             features="contrast",
-            labels="both",
+            labels="clf",
             encoder_name="sentence-transformers/bert-base-nli-mean-tokens",
             batch_size=32
         )
@@ -63,7 +65,7 @@ class ModuleTests(unittest.TestCase):
         self.eda_data_module = TwitterDataModule(
             root_dir="data/splits",
             features="contrast",
-            labels="both",
+            labels="clf",
             encoder_name="sentence-transformers/bert-base-nli-mean-tokens",
             batch_size=32,
             eda=True
@@ -74,7 +76,7 @@ class ModuleTests(unittest.TestCase):
 
     def contrast_batch_shared(self, batch, eda=False):
         self.assertEqual(batch['input_ids'].shape[0], 64)
-        self.assertEqual(batch["labels"].shape, torch.Size([64, 3]))
+        self.assertEqual(batch["labels"].shape, torch.Size([64]))
         if not eda:
             self.assertTrue((batch['input_ids'][:32] == batch['input_ids'][32:]).all().item())
             self.assertTrue((batch['attention_mask'][:32] == batch['attention_mask'][32:]).all().item())

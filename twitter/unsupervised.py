@@ -1,17 +1,19 @@
 """This script fits a GMM to TF-IDF vectors. It can plot the clusters in 2D using PCA and t-SNE as well as find the clusters with the most negative-, neutral- or positive sentiments."""
 
-import pandas as pd
-import numpy as np
+from collections import Counter
+from typing import Literal
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn import mixture
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA, KernelPCA
-from tqdm import tqdm
-from collections import Counter
-from typing import List, Literal
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.manifold import TSNE
+from tqdm import tqdm
+
 sns.set_theme()
 
 
@@ -180,7 +182,7 @@ def most_polarized(df: pd.DataFrame, column: str, n: int = 3):
     return pd.concat([most_negative, most_positive, random_neutral])
 
 
-def select_clusters(df: pd.DataFrame, column: str, cluster_ids: List[int]):
+def select_clusters(df: pd.DataFrame, column: str, cluster_ids: list[int]):
     mask = df[column].isin(cluster_ids)
     return df[mask]
 

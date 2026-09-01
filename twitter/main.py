@@ -1,16 +1,4 @@
 from lightning.pytorch.cli import LightningCLI
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-
-from twitter.modules import (
-    SingleTaskModule,
-    MultiTaskModule
-)
-from twitter.models import (
-    TransformerEncoder,
-    TransformerRegressor,
-    TransformerClassifier
-)
-from twitter.data import TwitterDataModule
 
 
 class MyLightningCLI(LightningCLI):

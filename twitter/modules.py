@@ -1,19 +1,19 @@
-from typing import Dict, Union, Literal, List
+from typing import Literal
 
 import lightning.pytorch as pl
-import torch
-from torch import nn
-import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import torch
+import torch.nn.functional as F
 from sklearn.metrics import ConfusionMatrixDisplay
+from torch import nn
 
 from twitter.models import (
+    Projector,
+    SupervisedContrastiveClassifier,
+    SupervisedContrastiveEncoder,
+    TransformerClassifier,
     TransformerEncoder,
     TransformerRegressor,
-    TransformerClassifier,
-    SupervisedContrastiveEncoder,
-    SupervisedContrastiveClassifier,
-    Projector
 )
 
 
@@ -31,14 +31,14 @@ class _BaseModule(pl.LightningModule):
                  encoder: TransformerEncoder,
                  task: Literal["reg", "clf"],
                  checkpoint: str = None,
-                 lr: Union[float, Dict[str, float]] = 3e-4,
+                 lr: float | dict[str, float] = 3e-4,
                  weight_decay: float = 0.01,
-                 freeze_cfg: Dict[str, List[int]] = None,
-                 unfreeze_cfg: Dict[str, List[int]] = None):
+                 freeze_cfg: dict[str, list[int]] = None,
+                 unfreeze_cfg: dict[str, list[int]] = None):
         super().__init__()
 
         if checkpoint:
-            state_dict = torch.load(checkpoint)
+            state_dict = torch.load(checkpoint, map_location="cpu" if not torch.cuda.is_available() else "cuda")
             state_dict_fixed = dict()
             for key, val in state_dict["state_dict"].items():
                 state_dict_fixed[key.replace("encoder.encoder.", "")] = val
@@ -62,11 +62,13 @@ class _BaseModule(pl.LightningModule):
             self.log_batch(batch, 5, "training")
 
     def on_train_epoch_end(self):
-        if self.hparams.freeze_cfg is not None and self.current_epoch in self.hparams.freeze_cfg:
-            self.encoder.freeze(layers=self.hparams.freeze_cfg[self.current_epoch])
+        freeze_cfg = getattr(self.hparams, "freeze_cfg", None)
+        unfreeze_cfg = getattr(self.hparams, "unfreeze_cfg", None)
+        if freeze_cfg is not None and self.current_epoch in freeze_cfg:
+            self.encoder.freeze(layers=freeze_cfg[self.current_epoch])
 
-        if self.hparams.unfreeze_cfg is not None and self.current_epoch in self.hparams.unfreeze_cfg:
-            self.encoder.freeze(layers=self.hparams.unfreeze_cfg[self.current_epoch], unfreeze=True)
+        if unfreeze_cfg is not None and self.current_epoch in unfreeze_cfg:
+            self.encoder.freeze(layers=unfreeze_cfg[self.current_epoch], unfreeze=True)
 
     def on_validation_batch_start(self, batch, batch_idx):
         # Log some texts from the first input batch
@@ -74,17 +76,42 @@ class _BaseModule(pl.LightningModule):
             self.log_batch(batch, 5, "validation")
 
     def log_batch(self, batch, n, stage: str):
-        for i in range(min(len(batch), n)):
-            text = self.model.encoder.tokenizer.decode(batch["input_ids"][i])
+        if self.logger is None or not hasattr(self.logger, "experiment") or self.logger.experiment is None:
+            return
+        tokenizer = getattr(self, "encoder", None)
+        if tokenizer is not None:
+            tokenizer = tokenizer.tokenizer
+        elif hasattr(self, "model") and hasattr(self.model, "encoder"):
+            tokenizer = self.model.encoder.tokenizer
+        elif hasattr(self, "model") and hasattr(self.model, "tokenizer"):
+            tokenizer = self.model.tokenizer
+        else:
+            return
+        # batch is dict with input_ids
+        if isinstance(batch, dict) and "input_ids" in batch:
+            ids = batch["input_ids"]
+        elif isinstance(batch, (list, tuple)) and len(batch) > 0:
+            ids = batch[0].get("input_ids", []) if isinstance(batch[0], dict) else []
+        else:
+            return
+        for i in range(min(len(ids), n)):
+            try:
+                text = tokenizer.decode(ids[i])
+            except Exception:
+                text = str(ids[i])
             self.logger.experiment.add_text(f"Input/{stage}", text, i)
 
     def log_high_confidence_errors(self):
+        if self.logger is None or not hasattr(self.logger, "experiment") or self.logger.experiment is None:
+            return
         for i, (review, label, pred) in enumerate(self.high_confidence_errors):
             text = self.encoder.tokenizer.decode(review)
             text += f"\n\nLabel: {label}\nPrediction: {pred}"
             self.logger.experiment.add_text("High Confidence Errors/validation", text, i)
 
     def log_confusion_matrix(self, confmat):
+        if self.logger is None or not hasattr(self.logger, "experiment") or self.logger.experiment is None:
+            return
         fig = plt.figure()
         disp = ConfusionMatrixDisplay(confmat.compute().cpu().numpy())
         disp.plot(ax=fig.gca())
@@ -104,11 +131,11 @@ class SingleTaskModule(_BaseModule):
                  encoder: TransformerEncoder,
                  task: Literal["reg", "clf"],
                  checkpoint: str = None,
-                 lr: Union[float, Dict[str, float]] = 3e-4,
+                 lr: float | dict[str, float] = 3e-4,
                  weight_decay: float = 0.01,
-                 freeze_cfg: Dict[str, List[int]] = None,
-                 unfreeze_cfg: Dict[str, List[int]] = None,
-                 class_weights: List[float] = None):
+                 freeze_cfg: dict[str, list[int]] = None,
+                 unfreeze_cfg: dict[str, list[int]] = None,
+                 class_weights: list[float] = None):
         super().__init__(encoder=encoder,
                          checkpoint=checkpoint,
                          lr=lr,
@@ -175,19 +202,20 @@ class MultiTaskModule(_BaseModule):
                  encoder: TransformerEncoder,
                  task: Literal["reg", "clf"],
                  checkpoint: str = None,
-                 lr: Union[float, Dict[str, float]] = 3e-4,
+                 lr: float | dict[str, float] = 3e-4,
                  weight_decay: float = 0.01,
-                 freeze_cfg: Dict[str, List[int]] = None,
-                 unfreeze_cfg: Dict[str, List[int]] = None,
+                 freeze_cfg: dict[str, list[int]] = None,
+                 unfreeze_cfg: dict[str, list[int]] = None,
                  freeze: bool = False,
                  loss_weight: float = 1.0,
-                 class_weights: List[float] = None):
+                 class_weights: list[float] = None):
         super().__init__(encoder=encoder,
                          checkpoint=checkpoint,
                          task=task,
                          lr=lr,
                          weight_decay=weight_decay,
-                         freeze_cfg=freeze_cfg)
+                         freeze_cfg=freeze_cfg,
+                         unfreeze_cfg=unfreeze_cfg)
 
         self.save_hyperparameters(ignore="encoder")
         self.reg = TransformerRegressor(encoder)
@@ -330,13 +358,13 @@ class SupervisedConstrastivePretrainingModule(pl.LightningModule):
         )
 
     def training_step(self, batch, batch_idx):
-        z = self.encoder(batch["input_ids"], batch["attention_mask"], batch["labels"])
+        z = self.encoder(batch["input_ids"], batch["attention_mask"])
         loss = self.encoder.loss_func(z, batch["labels"])
         self.log("loss/train", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        z = self.encoder(batch["input_ids"], batch["attention_mask"], batch["labels"])
+        z = self.encoder(batch["input_ids"], batch["attention_mask"])
         loss = self.encoder.loss_func(z, batch["labels"])
         self.log("loss/validation", loss, on_step=False, on_epoch=True)
         return loss
@@ -352,13 +380,13 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
 
     def __init__(self,
                  encoder: TransformerEncoder,
-                 lr: Union[float, Dict[str, float]] = 3e-4,
+                 lr: float | dict[str, float] = 3e-4,
                  weight_decay: float = 0.01,
                  loss_weight: float = 0.9,
                  temperature: float = 0.3,
-                 freeze_cfg: Dict[str, List[int]] = None,
-                 unfreeze_cfg: Dict[str, List[int]] = None,
-                 class_weights: List[float] = None):
+                 freeze_cfg: dict[str, list[int]] = None,
+                 unfreeze_cfg: dict[str, list[int]] = None,
+                 class_weights: list[float] = None):
         super().__init__(encoder=encoder,
                          freeze_cfg=freeze_cfg,
                          unfreeze_cfg=unfreeze_cfg,

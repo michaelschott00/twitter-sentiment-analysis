@@ -1,7 +1,9 @@
 import unittest
-from twitter.util import SCLoss
+
 import numpy as np
 import torch
+
+from twitter.util import SCLoss
 
 
 class UtilTests(unittest.TestCase):
