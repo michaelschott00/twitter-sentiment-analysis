@@ -23,6 +23,15 @@ RUN apt-get install -y unzip \
     && mv terraform /usr/bin
 
 RUN useradd -m -u 1000 agent
-RUN mkdir -p $HERMES_HOME && chown agent:agent $HERMES_HOME
+RUN mkdir -p $HERMES_HOME \
+    && chown agent:agent $HERMES_HOME \
+    && mkdir -p $HOME/.config/opencode \
+    && mkdir -p $HOME/.local/share/opencode \
+    && mkdir -p $HOME/.local/state/opencode \
+    && chown agent:agent -R $HOME
+
 USER agent
+
+RUN /home/agent/.opencode/bin/opencode completion >> /home/agent/.bashrc
+
 ENTRYPOINT "/bin/bash"
