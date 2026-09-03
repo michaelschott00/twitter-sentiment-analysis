@@ -6,7 +6,7 @@ Implements the minimal workflow from:
 https://learn.microsoft.com/en-us/entra/agent-id/create-blueprint?tabs=microsoft-graph-api
 
 Steps:
-  1. Acquire token via client_credentials (ARM_TENANT_ID/ARM_CLIENT_ID/ARM_CLIENT_SECRET env vars).
+  1. Acquire token (service principal or user) for Microsoft Graph.
   2. POST /applications/microsoft.graph.agentIdentityBlueprint -> create blueprint
   3. POST /applications/{objectId}/addPassword -> client secret (local dev)
   4. POST /servicePrincipals/microsoft.graph.agentIdentityBlueprintPrincipal -> principal
@@ -14,20 +14,36 @@ Steps:
 Auth secrets are read from environment variables (never hard-coded, no .env).
 Remaining settings are CLI arguments.
 
-Environment variables (required):
+Environment variables (service principal):
   ARM_TENANT_ID, ARM_CLIENT_ID, ARM_CLIENT_SECRET
-  Optional: ACCESS_TOKEN (pre-acquired Graph token, skips client_credentials)
+  Optional: ACCESS_TOKEN (pre-acquired Graph token, skips acquisition)
+  For user auth the same ARM_TENANT_ID/ARM_CLIENT_ID are reused (no secret needed).
 
 Usage:
+  # Service principal (client credentials)
   export ARM_TENANT_ID=... ARM_CLIENT_ID=... ARM_CLIENT_SECRET=...
   python create_agent_blueprint.py --sponsor-id <user-object-id> --verbose
-  python create_agent_blueprint.py --sponsor-upn sponsor@contoso.com --display-name "My Blueprint" --dry-run
+
+  # User authentication - device code (delegated, interactive browser prompt)
+  export ARM_TENANT_ID=... ARM_CLIENT_ID=...
+  python create_agent_blueprint.py --auth-mode user-device-code --sponsor-upn sponsor@contoso.com --verbose
+
+  # User authentication - interactive browser
+  python create_agent_blueprint.py --auth-mode user-interactive --sponsor-id <id> --verbose
+
+  # Azure CLI (uses `az account get-access-token`)
+  az login
+  python create_agent_blueprint.py --auth-mode azure-cli --sponsor-id <id>
+
+  # Auto-detect (default): tries service principal if ARM_CLIENT_SECRET set, otherwise device code
+  python create_agent_blueprint.py --sponsor-id <id> --dry-run
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -38,6 +54,15 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL_TMPL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 DEFAULT_SCOPE = "https://graph.microsoft.com/.default"
 
+# Delegated scopes required for blueprint creation (used for user auth).
+# .default can also be used if permissions are pre-consented.
+DELEGATED_SCOPES = [
+    "https://graph.microsoft.com/AgentIdentityBlueprint.Create",
+    "https://graph.microsoft.com/AgentIdentityBlueprint.AddRemoveCreds.All",
+    "https://graph.microsoft.com/AgentIdentityBlueprintPrincipal.Create",
+    "https://graph.microsoft.com/User.Read",
+]
+
 
 def _redact(s: str | None, keep: int = 4) -> str:
     if not s:
@@ -47,30 +72,9 @@ def _redact(s: str | None, keep: int = 4) -> str:
     return s[:keep] + "***" + s[-keep:]
 
 
-def acquire_token(verbose: bool = False) -> str:
-    access_token = os.getenv("ACCESS_TOKEN", "").strip()
-    if access_token:
-        click.echo("Using ACCESS_TOKEN from environment (skipping token acquisition)")
-        return access_token
-
-    tenant = os.getenv("ARM_TENANT_ID", "").strip()
-    client_id = os.getenv("ARM_CLIENT_ID", "").strip()
-    client_secret = os.getenv("ARM_CLIENT_SECRET", "").strip()
-    missing = [
-        k
-        for k in ("ARM_TENANT_ID", "ARM_CLIENT_ID", "ARM_CLIENT_SECRET")
-        if not os.getenv(k, "").strip()
-    ]
-    if missing:
-        click.echo(
-            f"Missing required environment variables: {', '.join(missing)}", err=True
-        )
-        click.echo(
-            "Set ARM_TENANT_ID, ARM_CLIENT_ID, ARM_CLIENT_SECRET in your shell before running.",
-            err=True,
-        )
-        sys.exit(1)
-
+def _acquire_token_service_principal(
+    tenant: str, client_id: str, client_secret: str, verbose: bool = False
+) -> str:
     url = TOKEN_URL_TMPL.format(tenant=tenant)
     data = {
         "client_id": client_id,
@@ -80,7 +84,7 @@ def acquire_token(verbose: bool = False) -> str:
     }
     if verbose:
         click.echo(
-            f"Requesting token from {url} client_id={_redact(client_id)} tenant={_redact(tenant)}"
+            f"[service-principal] Requesting token from {url} client_id={_redact(client_id)} tenant={_redact(tenant)}"
         )
     resp = requests.post(url, data=data, timeout=30)
     if not resp.ok:
@@ -92,8 +96,7 @@ def acquire_token(verbose: bool = False) -> str:
             err=True,
         )
         click.echo(
-            "  AgentIdentityBlueprint.Create, AgentIdentityBlueprint.AddRemoveCreds.All, "
-            "AgentIdentityBlueprintPrincipal.Create",
+            "  AgentIdentityBlueprint.Create, AgentIdentityBlueprint.AddRemoveCreds.All, AgentIdentityBlueprintPrincipal.Create",
             err=True,
         )
         resp.raise_for_status()
@@ -101,8 +104,173 @@ def acquire_token(verbose: bool = False) -> str:
     if not token:
         click.echo(f"No access_token in response: {resp.text}", err=True)
         sys.exit(1)
-    click.echo("Token acquired successfully")
+    click.echo("Token acquired successfully (service principal)")
     return token
+
+
+def _acquire_token_device_code(
+    tenant: str, client_id: str, scopes: list[str], verbose: bool = False
+) -> str:
+    try:
+        import msal
+    except ImportError:
+        click.echo("MSAL not installed. Install with: pip install msal", err=True)
+        sys.exit(1)
+    authority = f"https://login.microsoftonline.com/{tenant}"
+    app = msal.PublicClientApplication(client_id, authority=authority)
+    flow = app.initiate_device_flow(scopes=scopes)
+    if "user_code" not in flow:
+        click.echo(
+            f"Failed to create device flow: {json.dumps(flow, indent=2)}", err=True
+        )
+        click.echo(
+            "Ensure the app registration allows public client flows (Enable public client flows = Yes) and has delegated permissions consented.",
+            err=True,
+        )
+        sys.exit(1)
+    # flow["message"] already contains instructions: "To sign in, use a web browser to open ... and enter code ..."
+    click.echo(flow["message"])
+    if verbose:
+        click.echo(
+            f"[device-code] scopes={scopes} authority={authority} client_id={_redact(client_id)}"
+        )
+    result = app.acquire_token_by_device_flow(flow)
+    if "access_token" not in result:
+        click.echo(f"Device code flow failed: {json.dumps(result, indent=2)}", err=True)
+        sys.exit(1)
+    click.echo("Token acquired successfully (user / device code)")
+    return result["access_token"]
+
+
+def _acquire_token_interactive(
+    tenant: str, client_id: str, scopes: list[str], verbose: bool = False
+) -> str:
+    try:
+        import msal
+    except ImportError:
+        click.echo("MSAL not installed. Install with: pip install msal", err=True)
+        sys.exit(1)
+    authority = f"https://login.microsoftonline.com/{tenant}"
+    app = msal.PublicClientApplication(client_id, authority=authority)
+    if verbose:
+        click.echo(
+            f"[interactive] authority={authority} client_id={_redact(client_id)} scopes={scopes}"
+        )
+    result = app.acquire_token_interactive(scopes=scopes)
+    if "access_token" not in result:
+        click.echo(f"Interactive auth failed: {json.dumps(result, indent=2)}", err=True)
+        sys.exit(1)
+    click.echo("Token acquired successfully (user / interactive)")
+    return result["access_token"]
+
+
+def _acquire_token_azure_cli(verbose: bool = False) -> str:
+    # Uses `az account get-access-token --resource https://graph.microsoft.com`
+    cmd = [
+        "az",
+        "account",
+        "get-access-token",
+        "--resource",
+        "https://graph.microsoft.com",
+        "--query",
+        "accessToken",
+        "-o",
+        "tsv",
+    ]
+    if verbose:
+        click.echo(f"[azure-cli] Running: {' '.join(cmd)}")
+    try:
+        out = subprocess.check_output(cmd, text=True, timeout=30).strip()
+    except FileNotFoundError:
+        click.echo(
+            "Azure CLI not found. Install with: pip install azure-cli and run `az login`.",
+            err=True,
+        )
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        click.echo(f"az account get-access-token failed: {e}", err=True)
+        click.echo(
+            "Run `az login` and `az account set --subscription <id>` first.", err=True
+        )
+        sys.exit(1)
+    if not out or " " in out:
+        # tsv should be a single JWT; if empty or error
+        click.echo(f"Unexpected az output: {out!r}", err=True)
+        sys.exit(1)
+    click.echo("Token acquired successfully (azure-cli)")
+    return out
+
+
+def acquire_token(auth_mode: str, verbose: bool = False) -> str:
+    access_token = os.getenv("ACCESS_TOKEN", "").strip()
+    if access_token:
+        click.echo("Using ACCESS_TOKEN from environment (skipping token acquisition)")
+        return access_token
+
+    tenant = os.getenv("ARM_TENANT_ID", "").strip()
+    client_id = os.getenv("ARM_CLIENT_ID", "").strip()
+    client_secret = os.getenv("ARM_CLIENT_SECRET", "").strip()
+
+    # Normalize auth_mode
+    mode = auth_mode.lower()
+    if mode == "auto":
+        # Prefer service principal if secret is available, otherwise device code
+        if client_secret:
+            mode = "service-principal"
+        else:
+            mode = "user-device-code"
+
+    if verbose:
+        click.echo(f"Auth mode resolved: requested={auth_mode} -> effective={mode}")
+
+    if mode == "service-principal":
+        missing = [
+            k
+            for k in ("ARM_TENANT_ID", "ARM_CLIENT_ID", "ARM_CLIENT_SECRET")
+            if not os.getenv(k, "").strip()
+        ]
+        if missing:
+            click.echo(
+                f"Missing required environment variables for service principal: {', '.join(missing)}",
+                err=True,
+            )
+            click.echo(
+                "Set ARM_TENANT_ID, ARM_CLIENT_ID, ARM_CLIENT_SECRET, or use --auth-mode user-device-code / azure-cli.",
+                err=True,
+            )
+            sys.exit(1)
+        return _acquire_token_service_principal(
+            tenant, client_id, client_secret, verbose=verbose
+        )
+
+    if mode in ("user-device-code", "device-code"):
+        if not tenant or not client_id:
+            click.echo("Missing ARM_TENANT_ID / ARM_CLIENT_ID for user auth", err=True)
+            click.echo(
+                "Set ARM_TENANT_ID and ARM_CLIENT_ID (no secret needed for public client).",
+                err=True,
+            )
+            sys.exit(1)
+        return _acquire_token_device_code(
+            tenant, client_id, DELEGATED_SCOPES, verbose=verbose
+        )
+
+    if mode in ("user-interactive", "interactive"):
+        if not tenant or not client_id:
+            click.echo("Missing ARM_TENANT_ID / ARM_CLIENT_ID for user auth", err=True)
+            sys.exit(1)
+        return _acquire_token_interactive(
+            tenant, client_id, DELEGATED_SCOPES, verbose=verbose
+        )
+
+    if mode == "azure-cli":
+        return _acquire_token_azure_cli(verbose=verbose)
+
+    click.echo(
+        f"Unknown auth mode: {auth_mode} (choices: auto, service-principal, user-device-code, user-interactive, azure-cli)",
+        err=True,
+    )
+    sys.exit(1)
 
 
 def resolve_user_id(token: str, upn: str, verbose: bool = False) -> str:
@@ -292,6 +460,22 @@ def create_principal(token: str, app_id: str, verbose: bool = False) -> dict:
     "--skip-principal", is_flag=True, help="Skip blueprint principal creation"
 )
 @click.option(
+    "--auth-mode",
+    type=click.Choice(
+        [
+            "auto",
+            "service-principal",
+            "user-device-code",
+            "user-interactive",
+            "azure-cli",
+        ],
+        case_sensitive=False,
+    ),
+    default="auto",
+    show_default=True,
+    help="Authentication mode: auto (SP if ARM_CLIENT_SECRET set else device code), service-principal (client credentials), user-device-code, user-interactive, azure-cli",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Validate args and show planned actions without calling Graph",
@@ -310,6 +494,7 @@ def main(
     credential_display_name,
     credential_end_date,
     skip_principal,
+    auth_mode,
     dry_run,
     verbose,
 ):
@@ -318,12 +503,12 @@ def main(
         click.echo(
             f"Args: display_name={display_name} sponsor_id={sponsor_id or '<none>'} "
             f"sponsor_upn={sponsor_upn or '<none>'} owner_id={owner_id or '<none>'} "
-            f"owner_upn={owner_upn or '<none>'} credential={credential_display_name}"
+            f"owner_upn={owner_upn or '<none>'} credential={credential_display_name} auth_mode={auth_mode}"
         )
 
     token: str | None = None
     if not dry_run:
-        token = acquire_token(verbose=verbose)
+        token = acquire_token(auth_mode, verbose=verbose)
         # Resolve UPN -> ID if needed
         if not sponsor_id and sponsor_upn:
             sponsor_id = resolve_user_id(token, sponsor_upn, verbose=verbose)
@@ -339,7 +524,9 @@ def main(
             )
             sys.exit(1)
     else:
-        click.echo("[dry-run] Would acquire token and validate sponsor/owner")
+        click.echo(
+            f"[dry-run] Would acquire token via auth_mode={auth_mode} and validate sponsor/owner"
+        )
         if not sponsor_id and not sponsor_upn:
             click.echo(
                 "[dry-run] WARNING: no --sponsor-id/--sponsor-upn — will fail at runtime",
