@@ -15,6 +15,7 @@ gradio
 ruff
 basedpyright
 click
+requests
 pytest
 tqdm
 pyyaml
@@ -24,6 +25,7 @@ imbalanced-learn
 tiktoken
 openai
 mlflow
+azure-cli
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 torchtext
