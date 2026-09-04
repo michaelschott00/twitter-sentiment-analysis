@@ -1,4 +1,5 @@
 - This environment is a docker container built from `Dockerfile` and `compose.yaml` in this directory. All changes to the environment should be documented in these files for future runs. The `docker` command itself is not available.
+- For azure environment variables use the `ARM_*` pattern.
 - Python packages need to be installed with `--break-system-packages`. Any installed packages should be added to `requirements.txt`.
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - This project does not use jupyter notebooks. Scripts with `click` based CLI are always preferred.
