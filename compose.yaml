@@ -10,9 +10,11 @@ services:
     environment:
       - HERMES_HOME=/home/agent/.hermes
       - SIDECAR_URL=http://sidecar:5000
-      - AGENT_APP_ID=${AGENT_CLIENT_ID}
       - BLUEPRINT_APP_ID=${BLUEPRINT_APP_ID}
-      - TENANT_ID=${TENANT_ID}
+      - ARM_CLIENT_ID=${AGENT_CLIENT_ID}
+      - ARM_TENANT_ID=${ARM_TENANT_ID}
+      - ARM_SUBSCRIPTION_ID=${ARM_SUBSCRIPTION_ID}
+      - ARM_USE_OIDC=true
     depends_on:
       - sidecar
     networks:
@@ -28,7 +30,7 @@ services:
     environment:
       # Microsoft Entra ID Configuration - Use BLUEPRINT App ID here!
       - AzureAd__Instance=https://login.microsoftonline.com/
-      - AzureAd__TenantId=${TENANT_ID}
+      - AzureAd__TenantId=${ARM_TENANT_ID}
       - AzureAd__ClientId=${BLUEPRINT_APP_ID}
       
       # Client Secret Configuration
