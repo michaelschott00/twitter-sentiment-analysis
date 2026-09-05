@@ -9,46 +9,22 @@ services:
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
     environment:
       - HERMES_HOME=/home/agent/.hermes
-      - SIDECAR_URL=http://sidecar:5000
-      - BLUEPRINT_APP_ID=${BLUEPRINT_APP_ID}
-      - ARM_CLIENT_ID=${AGENT_CLIENT_ID}
-      - ARM_TENANT_ID=${ARM_TENANT_ID}
-      - ARM_SUBSCRIPTION_ID=${ARM_SUBSCRIPTION_ID}
-      - ARM_USE_OIDC=true
-    depends_on:
-      - sidecar
-    networks:
-      - app-network
-    command: sleep infinity
-    entrypoint: ""
+      - AGENT_VAULT_ADDR=http://vault:14321
+      - AGENT_VAULT_TOKEN=${AGENT_VAULT_TOKEN}
+      - AGENT_VAULT_VAULT=default
+      - GITHUB_TOKEN="__github_token__"
+    # command: sleep infinity
+    # entrypoint: ""
 
-  # Microsoft Entra ID Auth SDK (sidecar) - Docker Compose pattern
-  # Docs: https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/installation#docker-compose
-  # Container image: mcr.microsoft.com/entra-sdk/auth-sidecar
-  sidecar:
-    image: mcr.microsoft.com/entra-sdk/auth-sidecar:1.0.0-azurelinux3.0-distroless
+  vault:
+    image: infisical/agent-vault
     environment:
-      # Microsoft Entra ID Configuration - Use BLUEPRINT App ID here!
-      - AzureAd__Instance=https://login.microsoftonline.com/
-      - AzureAd__TenantId=${ARM_TENANT_ID}
-      - AzureAd__ClientId=${BLUEPRINT_APP_ID}
-      
-      # Client Secret Configuration
-      - AzureAd__ClientCredentials__0__SourceType=ClientSecret
-      - AzureAd__ClientCredentials__0__ClientSecret=${BLUEPRINT_CLIENT_SECRET}
-      
-      # Downstream API: autonomous / app-only (client credentials)
-      - DownstreamApis__graph-app__BaseUrl=https://graph.microsoft.com/v1.0/
-      - DownstreamApis__graph-app__Scopes__0=https://graph.microsoft.com/.default
-      - DownstreamApis__graph-app__RequestAppToken=true
-      
-      # ASP.NET Core settings
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:5000
-      - AllowedHosts=*
-    networks:
-      - app-network
+      - AGENT_VAULT_MASTER_PASSWORD=${AGENT_VAULT_MASTER_PASSWORD}
+    ports:
+      - "14321:14321"
+      - "14322:14322"
+    volumes:
+      - agent-vault-data:/data
 
-networks:
-  app-network:
-    driver: bridge
+volumes:
+  agent-vault-data:

@@ -1,28 +1,36 @@
 FROM python:3.12-slim
 
+WORKDIR /workspace
+
+# Install basic utils
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git && rm -rf /var/lib/apt/lists/*
+
+# Install hermes
 ENV HERMES_HOME=/home/agent/.hermes
 ENV HOME=/home/agent
 # ENV HERMES_TUI=1
-
-WORKDIR /workspace
-
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git && rm -rf /var/lib/apt/lists/*
-
 RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 RUN npx playwright install-deps chromium
 
+# Install opencode
 RUN curl -fsSL https://opencode.ai/install | bash
 
+# Install python packages
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r requirements.txt
 
+# Install terraform
 RUN apt-get install -y unzip \
     && curl -fsSLO https://releases.hashicorp.com/terraform/1.16.0/terraform_1.16.0_linux_amd64.zip \
     && unzip terraform_1.16.0_linux_amd64.zip \
     && mv terraform /usr/bin
 
+# Install agent vault
+RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://get.agent-vault.dev | sh
+
+# Create unprivileged agent user
 RUN useradd -m -u 1000 agent
 RUN mkdir -p $HERMES_HOME \
     && chown agent:agent $HERMES_HOME \
@@ -30,9 +38,11 @@ RUN mkdir -p $HERMES_HOME \
     && mkdir -p $HOME/.local/share/opencode \
     && mkdir -p $HOME/.local/state/opencode \
     && chown agent:agent -R $HOME
-
+RUN apt-get update && apt-get install -y gh
 USER agent
 
+# Install opencode shell completions
 RUN /home/agent/.opencode/bin/opencode completion >> /home/agent/.bashrc
 
-ENTRYPOINT "/bin/bash"
+# Override python entrypoint
+ENTRYPOINT ["agent-vault", "run", "--", "/home/agent/.opencode/bin/opencode"]
