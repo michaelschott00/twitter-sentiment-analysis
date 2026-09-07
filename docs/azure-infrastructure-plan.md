@@ -7,22 +7,21 @@
 ## Table of Contents
 
 1. [Overview & Goals](#1-overview--goals)
-2. [Current Local Infrastructure](#2-current-local-infrastructure)
-3. [Target Architecture](#3-target-architecture)
-4. [Azure Resources — Inventory](#4-azure-resources--inventory)
-5. [Terraform Layout & Modules](#5-terraform-layout--modules)
-6. [Data Storage Strategy](#6-data-storage-strategy)
-7. [MLflow Integration](#7-mlflow-integration)
-8. [Training Pipeline (Azure ML Jobs)](#8-training-pipeline-azure-ml-jobs)
-9. [Model Registry & Artifacts](#9-model-registry--artifacts)
-10. [Inference Endpoint (Non-Production)](#10-inference-endpoint-non-production)
-11. [IAM, Security & Networking](#11-iam-security--networking)
-12. [Cost Control](#12-cost-control)
-13. [CI/CD & Local Dev Workflow](#13-cicd--local-dev-workflow)
-14. [Implementation Roadmap (Phases)](#14-implementation-roadmap-phases)
-15. [Risks & Open Decisions](#15-risks--open-decisions)
-16. [Terraform Snippets (Illustrative)](#16-terraform-snippets-illustrative)
-17. [Appendices](#17-appendices)
+2. [Target Architecture](#3-target-architecture)
+3. [Azure Resources — Inventory](#4-azure-resources--inventory)
+4. [Terraform Layout & Modules](#5-terraform-layout--modules)
+5. [Data Storage Strategy](#6-data-storage-strategy)
+6. [MLflow Integration](#7-mlflow-integration)
+7. [Training Pipeline (Azure ML Jobs)](#8-training-pipeline-azure-ml-jobs)
+8. [Model Registry & Artifacts](#9-model-registry--artifacts)
+9. [Inference Endpoint (Non-Production)](#10-inference-endpoint-non-production)
+10. [IAM, Security & Networking](#11-iam-security--networking)
+11. [Cost Control](#12-cost-control)
+12. [CI/CD & Local Dev Workflow](#13-cicd--local-dev-workflow)
+13. [Implementation Roadmap (Phases)](#14-implementation-roadmap-phases)
+14. [Risks & Open Decisions](#15-risks--open-decisions)
+15. [Terraform Snippets (Illustrative)](#16-terraform-snippets-illustrative)
+16. [Appendices](#17-appendices)
 
 ---
 
@@ -35,7 +34,7 @@ The project is originally a ML competition codebase (Twitter sentiment classific
 | ID | Requirement                   | Success Criteria                                                                                                                                                                     |
 | -- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | R1 | Store dataset in Azure        | Raw + splits in versioned Azure Storage, registered as Azure ML Data Assets, reproducible `TwitterDataModule(root_dir=...)` without local `data/`                                    |
-| R2 | Train & store models on Azure | `python -m twitter.main` equivalent runs as `az ml job` on Azure ML compute, checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud                            |
+| R2 | Train & store models on Azure | `python -m twitter.main` equivalent runs as AML Command Job on Azure ML compute, checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud                            |
 | R3 | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). integrate `lightning.pytorch.loggers.MLFlowLogger`                                               |
 | R4 | Inference endpoint (explore)  | Deploy one registered model to a Managed Online Endpoint (non-prod, 0/1 instance, key auth) with `score.py` that wraps `AutoTokenizer` + `TransformerClassifier`                     |
 
@@ -49,28 +48,9 @@ The project is originally a ML competition codebase (Twitter sentiment classific
 
 ---
 
-## 2. Current Local Infrastructure
+## 2. Target Architecture
 
-| Area            | Current State                                                                                                                                                                                 | File                                                                      |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Runtime**     | `python:3.12-slim`, `pip install -r requirements.txt`, user `agent:1000`, `opencode` + `hermes` baked in                                                                                      | `Dockerfile`                                                              |
-| **Dev loop**    | `compose.yaml` builds `dev` service, bind-mounts `.:/workspace`, persists `~/.hermes`, `~/.config/opencode`                                                                                   | `compose.yaml`                                                            |
-| **Python deps** | `torch` (CPU wheel), `lightning`, `transformers`, `tiktoken`, `openai`, `mlflow` (present but unused), `lightgbm`, `tensorboard`                                                              | `requirements.txt`                                                        |
-| **Data**        | `data/raw/tweets_train.csv`, `data/splits/tweets_{train,dev,test_*}*.csv`, `data/augmentation/`, `data/external/` — all **gitignored**                                                        | `.gitignore`, `data/` listing                                             |
-| **Config**      | `LightningCLI` with `configs/defaults.yaml` (trainer=null logger) + `configs/data.yaml` (`root_dir: data/splits/`) + `configs/tasks/{clf,reg,multitask,scl}.yaml` + `configs/encoders/*.yaml` | `twitter/main.py`, `configs/`                                             |
-| **Data code**   | `TwitterDataModule(root_dir, features, labels, encoder_name, batch_size, ...)` loads `tweets_{split}.csv`; supports `ExternalTextDataset`                                                     | `twitter/data.py`                                                         |
-| **Model code**  | `TransformerEncoder` (HF `AutoModel`), `TransformerRegressor/Classifier`, `MultiTaskModule`, `SupervisedContrastive*`; metrics via `torchmetrics`                                             | `twitter/models.py`, `twitter/modules.py`                                 |
-| **Logging**     | `trainer.logger: null` in `configs/defaults.yaml`; manual `TensorBoard` via `self.logger.experiment.add_text/figure`                                                                          | `configs/defaults.yaml`, `twitter/modules.py`, `README.md`                |
-| **Terraform**   | `infra/terraform/infra.tf` contains current configuration but may be restructured. Terraform HCP runs plan and apply and triggers on `git push`.                                              | `infra/terraform/infra.tf`                                                |
-| **MLflow**      | Listed as dep, **zero imports** in `twitter/` (`grep mlflow` → 2 hits only in docs). Opportunity for swap.                                                                                    | `grep`                                                                    |
-
-**Implication:** The migration is mostly *configuration* — add logger, upload data, wrap training as AML job. No model code rewrite required except making `root_dir` + logger injectable.
-
----
-
-## 3. Target Architecture
-
-### 3.1 mermaid — logical view
+### 2.1 mermaid — logical view
 
 ```mermaid
 flowchart TB
@@ -107,7 +87,7 @@ flowchart TB
     end
 
     DEV -- "git push dev -> HCP plan/apply" --> AzureRG
-    CODE -- "az ml data create / job create\n+ mlflow logging" --> WS
+    CODE -- "AML SDK job submit\n+ mlflow logging" --> WS
     CODE -- "docker build -> ACR" --> ACR
     ST -- "blob mount / download" --> COMP_CLUSTER
     COMP_CLUSTER -- "runs" --> JOB
@@ -117,7 +97,7 @@ flowchart TB
     GIT -- "CI (optional)" --> ACR & JOB
 ```
 
-### 3.2 mermaid — data / training flow
+### 2.2 mermaid — data / training flow
 
 ```mermaid
 sequenceDiagram
@@ -129,23 +109,23 @@ sequenceDiagram
     participant REG as Model Registry
     participant EP as Online Endpoint
 
-    Dev->>SA: azcopy / az ml data create --type uri_folder (raw + splits)
-    Dev->>WS: az ml environment create (Dockerfile / pip)
-    Dev->>WS: az ml data create --name twitter-splits --version 1
-    Dev->>WS: az ml job create training-job.yaml (command)
+    Dev->>SA: azcopy (raw + splits)
+    Dev->>WS: terraform apply provisions environment + compute
+    Dev->>WS: register data assets (operational step)
+    Dev->>WS: AML SDK submit training-job
     WS->>CC: schedule job (queue, spot)
     CC->>SA: mount datastore (WASBS) -> /mnt/data/splits
     CC->>ML: MLflowLogger(tracking_uri=<ws>) logs params/metrics
-    CC->>REG: mlflow.azureml + az ml model create (MLflow model)
+    CC->>REG: mlflow.register_model (MLflow model registry)
     Dev->>REG: approve / tag model (MacroF1: 0.79)
-    Dev->>EP: az ml online-endpoint create + deployment --model REG:latest
+    Dev->>EP: terraform apply creates endpoint + deployment
     EP->>EP: score.py (AutoTokenizer + TransformerClassifier) health probe
     Dev->>EP: curl -H "Authorization: Bearer <key>" -d '{"text":"..."}'
 ```
 
 ---
 
-## 4. Azure Resources — Inventory
+## 3. Azure Resources — Inventory
 
 All resources in **one resource group** for cost visibility + easy teardown (learning project). Region: `West Europe`. Naming: lowercase alphanumeric.
 
@@ -164,9 +144,10 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 | 11 | `azurerm_machine_learning_compute_instance` (optional)                         | `ci-dev`                                 | Interactive debugging / notebook                               | `Standard_DS3_v2`, `idle_time_before_shutdown=30` min                                                                                                                             |
 | 12 | `azurerm_role_assignment` (×N)                                                 | —                                        | Least-privilege                                                | Workspace MSI → `Storage Blob Data Contributor` on SA; user → `AzureML Data Scientist` on WS                                                                                      |
 | 13 | *(Future)* `azurerm_machine_learning_online_endpoint`                          | `tw-sentiment`                           | Managed Online Endpoint                                        | `auth_mode=key`, `public_network_access_enabled=true` for demo                                                                                                                    |
-| 14 | *(Future)* `azurerm_machine_learning_online_deployment`                        | `blue`                                   | Deployment for registered model                                | `instance_type=Standard_DS2_v2`, `instance_count=1`, `scale` min 0 for cost                                                                                                       |
+| 14 | `azurerm_consumption_budget_resource_group`                                   | `budget-twitter-ml`                      | Cost safety net                                                | Alert thresholds at $25 / $50; emails subscription owner                                                                                                                            |
+| 15 | *(Future)* `azurerm_machine_learning_online_deployment`                        | `blue`                                   | Deployment for registered model                                | `instance_type=Standard_DS2_v2`, `instance_count=1`, `scale` min 0 for cost                                                                                                       |
 
-### 4.1 Compute sizing (maps to ≤24GB VRAM requirement)
+### 3.1 Compute sizing (maps to ≤24GB VRAM requirement)
 
 | Cluster                             | VM Size                                                 | vCPU / RAM / GPU            | VRAM       | When to use                                                                    | Cost hint (W. Europe, spot ~60% off)                    |
 | ----------------------------------- | ------------------------------------------------------- | --------------------------- | ---------- | ------------------------------------------------------------------------------ | ------------------------------------------------------- |
@@ -178,9 +159,9 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 
 ---
 
-## 5. Terraform Layout & Modules
+## 4. Terraform Layout & Modules
 
-### 5.1 Directory tree
+### 4.1 Directory tree
 
 ```text
 infra/
@@ -225,7 +206,7 @@ infra/
 
 Terraform state and plan/apply are handled by **Terraform HCP**, triggered on `git push` to `dev`; no local bootstrap or remote backend config is needed.
 
-### 5.2 Variables (excerpt)
+### 4.2 Variables (excerpt)
 
 ```hcl
 variable "env"              { type = string, default = "dev" }
@@ -238,7 +219,7 @@ variable "compute_max_nodes"{ type = number, default = 2 }
 variable "vm_priority"      { type = string, default = "LowPriority" } # Dedicated vs LowPriority (spot)
 ```
 
-### 5.3 Root wiring (`main.tf` sketch)
+### 4.3 Root wiring (`main.tf` sketch)
 
 ```hcl
 module "rg"         { source = "./modules/resource_group" }
@@ -259,9 +240,9 @@ module "ml_compute" {
 
 ---
 
-## 6. Data Storage Strategy
+## 5. Data Storage Strategy
 
-### 6.1 What to store where
+### 5.1 What to store where
 
 | Local Path                                                  | Azure Destination                                                     | Azure ML Abstraction                                                                         | Versioning                              |
 | ----------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -271,22 +252,30 @@ module "ml_compute" {
 | `data/external/` (empty today)                              | `st…/external/`                                                       | Reserved for future SMOTE/TF-IDF artefacts                                                   | —                                       |
 | `lightning_logs/`                                           | **not** uploaded — checkpoints go to `st…/models/` or AML job outputs | Job outputs (`outputs/model.ckpt`) auto-uploaded to datastore                                | MLflow artifact store                   |
 
-### 6.2 How `TwitterDataModule` stays compatible
+### 5.2 How `TwitterDataModule` stays compatible
 
-- **Before:** `configs/data.yaml` `root_dir: "data/splits/"`
-- **After (cloud):** `root_dir: ${{inputs.splits}}` or `/mnt/data/splits` mounted from datastore. In `training-job.yaml`, map:
+`configs/data.yaml` keeps its local default so `python -m twitter.main` still runs on-device:
 
-  ```yaml
-  inputs:
-    splits:
-      type: uri_folder
-      path: azureml:twitter-splits:1
-  ```
+- **Local (unchanged default):** `configs/data.yaml` → `root_dir: "data/splits/"`
+- **Cloud:** `root_dir` is overridden **at job submission time** (never by editing the committed config), via the job’s CLI argument — not by changing `configs/data.yaml`:
 
-  and pass via CLI: `python -m twitter.main --config ... data.init_args.root_dir=$INPUT_SPLITS`
-- **Alternative for quick migration (no code change):** `azcopy cp "data/splits/*" "https://${ST}.blob.core.windows.net/splits" --recursive` then set `root_dir: wasbs://splits@st...blob.core.windows.net/` or use `azureml://datastores/workspaceblobstore/paths/splits/`. Prefer data assets (lineage + version).
+```yaml
+# infra/jobs/job-clf-sbert.yaml
+inputs:
+  splits:
+    type: uri_folder
+    path: azureml:twitter-splits:1
+```
 
-### 6.3 Terraform for storage
+```text
+python -m twitter.main \
+  --config ... \
+  data.init_args.root_dir=${{inputs.splits}}
+```
+
+`${{inputs.splits}}` is an Azure ML expression that resolves to the mounted datastore path only inside the AML run; locally it would be an invalid path, so the committed default stays `data/splits/`.
+
+### 5.3 Terraform for storage
 
 ```hcl
 resource "azurerm_storage_account" "ml" {
@@ -310,15 +299,35 @@ resource "azurerm_storage_container" "external" { name = "external"; storage_acc
 resource "azurerm_storage_container" "models"   { name = "models";   storage_account_name = azurerm_storage_account.ml.name }
 ```
 
-### 6.4 Datastore linking
+### 5.4 Datastore linking
 
-AML workspace auto-creates `workspaceblobstore` pointing at its linked storage. Additional datastores for the 4 containers are created **outside Terraform** via `az ml datastore create --type azure_blob` (or via `azurerm_machine_learning_datastore_blob_storage` if provider supports — check `azurerm` changelog; fallback is `az` CLI post-apply). Document both.
+AML workspace auto-creates `workspaceblobstore` pointing at its linked storage. Additional datastores for the 4 containers are created via `azurerm_machine_learning_datastore_blob_storage` in Terraform:
+
+```hcl
+resource "azurerm_machine_learning_datastore_blob_storage" "raw" {
+  name                 = "ds-raw"
+  workspace_id         = module.ml_workspace.id
+  storage_account_id   = module.storage.account_id
+  container_name       = "raw"
+  authentication_type  = "managed_identity" # workspace MSI
+}
+
+resource "azurerm_machine_learning_datastore_blob_storage" "splits" {
+  name                 = "ds-splits"
+  workspace_id         = module.ml_workspace.id
+  storage_account_id   = module.storage.account_id
+  container_name       = "splits"
+  authentication_type  = "managed_identity"
+}
+```
+
+Repeat for `external` and `models` containers.
 
 ---
 
-## 7. MLflow Integration
+## 6. MLflow Integration
 
-### 7.1 Azure ML’s managed MLflow (zero self-host)
+### 6.1 Azure ML’s managed MLflow (zero self-host)
 
 Overview:
 
@@ -327,7 +336,7 @@ Overview:
 
 Implementation:
 
-1. **Tracking URI:** `MLFLOW_TRACKING_URI` = workspace URI (`azurerm_machine_learning_workspace.ml_workspace.mlflow_tracking_uri` output or `az ml workspace show --query mlflow_tracking_uri`). Use Managed Identity — no PAT.
+1. **Tracking URI:** `MLFLOW_TRACKING_URI` = workspace URI from Terraform output (`azurerm_machine_learning_workspace.ml_workspace.mlflow_tracking_uri`). Use Managed Identity — no PAT.
 
 2. **Lightning logger swap:**
 
@@ -352,9 +361,9 @@ Implementation:
 
 4. **Auth:** Locally `az login` then `mlflow` uses `DefaultAzureCredential`. In AML job, `MLFLOW_TRACKING_URI` + managed identity auto-auth (no secret).
 
-5. **Artifacts:** Checkpoints (`ModelCheckpoint` callback) + `lightning_logs/` → MLflow artifact store (backed by `st…/azureml` container). Also register model via `mlflow.register_model()` or `az ml model create --type mlflow_model`.
+5. **Artifacts:** Checkpoints (`ModelCheckpoint` callback) + `lightning_logs/` → MLflow artifact store (backed by `st…/azureml` container). Register model via `mlflow.register_model()`.
 
-### 7.2 Terraform output needed
+### 6.2 Terraform output needed
 
 ```hcl
 output "mlflow_tracking_uri" {
@@ -363,40 +372,47 @@ output "mlflow_tracking_uri" {
 output "workspace_name" { value = azurerm_machine_learning_workspace.this.name }
 ```
 
-### 7.3 Local vs cloud parity
+### 6.3 Local vs cloud parity
 
 - **Local dev:** `MLFLOW_TRACKING_URI` can point to `http://localhost:5000` (run `mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns`) or directly to Azure (`az login` required). Document both in `.env.example`.
 - **CI:** Not required initially; mention for completeness.
 
 ---
 
-## 8. Training Pipeline (Azure ML Jobs)
+## 7. Training Pipeline (Azure ML Jobs)
 
 No need for Kubeflow/Airflow — Azure ML **Command Jobs** suffice for learning.
 
-### 8.1 Environment
-
-Build from existing `Dockerfile` + `requirements.txt`:
+### 7.1 Environment
 
 ```dockerfile
 # infra/environments/Dockerfile (extends base)
 FROM mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-shared.txt .
+COPY requirements-cloud.txt .
+RUN pip install --no-cache-dir -r requirements-shared.txt \
+    && pip install --no-cache-dir -r requirements-cloud.txt
 # Hugging Face cache env
 ENV HF_HOME=/tmp/hf_cache
 ```
 
-Register:
+Register the environment via Terraform using `azurerm_machine_learning_environment`:
 
-```bash
-az ml environment create --file infra/environments/twitter-ml-env.yaml
-# yaml contains: name: twitter-ml-env, version: 1, build: {path: .}, pip install -r requirements.txt
+```hcl
+resource "azurerm_machine_learning_environment" "twitter_ml" {
+  name                   = "twitter-ml-env"
+  workspace_id           = module.ml_workspace.id
+  environment_type       = "Curated"
+  image                  = "mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04"
+  inference_config {
+    # managed online endpoint uses this env
+  }
+}
 ```
 
-*Alternative:* Use curated `mcr.microsoft.com/azureml/curated/lightning-pytorch:2.0-cuda11.8` + pip install delta — cheaper build time.
+For custom environments with `requirements.txt`, use the `az ml environment create` command as an operational step (not infrastructure-as-code) — the YAML lives in `infra/environments/twitter-ml-env.yaml`.
 
-### 8.2 Job YAML (example: classification)
+### 7.2 Job YAML (example: classification)
 
 ```yaml
 # infra/jobs/job-clf-sbert.yaml
@@ -427,38 +443,40 @@ services:
   # optional: enable TensorBoard via AML
 ```
 
-Submit:
+Submit the job via the AML SDK (operational step, not Terraform):
 
-```bash
-az ml job create --file infra/jobs/job-clf-sbert.yaml \
-  --set inputs.splits.path=azureml:twitter-splits:1 \
-  --set environment=azureml:twitter-ml-env:1
-# logs stream: az ml job stream --name <job>
-# mlflow ui: az ml job show + MLFLOW_TRACKING_URI
+```python
+# Or via Azure ML Python SDK v2
+from azure.ai.ml import MLClient, command
+
+ml_client = MLClient.from_config()
+job = ml_client.jobs.create_or_update(
+    command(
+        code=".",
+        command="python -m twitter.main --config ...",
+        environment="azureml:twitter-ml-env:1",
+        compute="azureml:cluster-gpu-spot",
+        experiment_name="twitter-sentiment",
+    )
+)
+ml_client.jobs.stream(job.name)
 ```
 
-### 8.3 Mapping existing configs
+### 7.3 Mapping existing configs
 
-| Task                | Config pair                                                                   | Cluster                | Metrics                                           |
-| ------------------- | ----------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------- |
-| `clf`               | `classification.yaml` + `sentence_bert_base.yaml`                             | `cluster-gpu-spot`     | `MulticlassF1Score` (macro), `MulticlassAccuracy` |
-| `reg`               | `regression.yaml` + `sentence_bert_base.yaml`                                 | same                   | `MeanSquaredError` (RMSE)                         |
-| `multitask`         | `multitask.yaml` + `sentence_bert_base.yaml`                                  | same                   | both — `loss_weight` logged to MLflow             |
-| `lightgbm` baseline | New script `twitter/baselines/lightgbm_baseline.py` (already exists) + TF-IDF | `cluster-cpu`          | Macro F1 / RMSE                                   |
-| `llm` baseline      | `llm_baseline.py` (calls Foundry)                                             | `cluster-cpu` or local | No training — skip AML                            |
-
-### 8.4 Hyperparameter sweep (future)
-
-Use `az ml sweep` on same command job: search `model.init_args.lr`, `data.init_args.batch_size`, `ngram_range` (baseline) — not required initially but plan mentions it.
+| Task                | Config pair                                       | Cluster                | Metrics                                           |
+| ------------------- | ------------------------------------------------- | ---------------------- | ------------------------------------------------- |
+| `clf`               | `classification.yaml` + `sentence_bert_base.yaml` | `cluster-gpu-spot`     | `MulticlassF1Score` (macro), `MulticlassAccuracy` |
+| `reg`               | `regression.yaml` + `sentence_bert_base.yaml`     | `cluster-gpu-spot`     | `MeanSquaredError` (RMSE)                         |
+| `multitask`         | `multitask.yaml` + `sentence_bert_base.yaml`      | `cluster-gpu-spot`     | both — `loss_weight` logged to MLflow             |
+| `lightgbm` baseline | `twitter/baselines/lightgbm_baseline.py` + TF-IDF | `cluster-cpu`          | Macro F1 / RMSE                                   |
+| `llm` baseline      | `llm_baseline.py` (calls Foundry)                 | `cluster-cpu` or local | No training — skip AML                            |
 
 ---
 
-## 9. Model Registry & Artifacts
+## 8. Model Registry & Artifacts
 
-**Two registries, unified via MLflow:**
-
-1. **MLflow Model Registry** (workspace-backed) — `mlflow.register_model("runs:/<run_id>/model", "twitter-bert-clf")`
-2. **Azure ML Model Registry** — `az ml model create --name twitter-bert-clf --type mlflow_model --path runs:/...` (same backing store). Show both; prefer AML registry for endpoint deployment (type `mlflow_model` includes `MLmodel` signature).
+Use the **workspace-backed MLflow Model Registry** for model versioning, registering via `mlflow.register_model("runs:/<run_id>/model", "twitter-bert-clf")`; the AML endpoint can deploy that registered MLflow model directly.
 
 Artifacts to log per run:
 
@@ -472,11 +490,11 @@ Naming: `twitter-{encoder}-{task}:{version}` e.g., `twitter-sbert-clf:2`, tags `
 
 ---
 
-## 10. Inference Endpoint (Non-Production)
+## 9. Inference Endpoint (Non-Production)
 
 **Goal:** *Try it out* — not SLA, scale-to-zero allowed.
 
-### 10.1 Resource plan
+### 9.1 Resource plan
 
 ```hcl
 # modules/ml_inference/main.tf  (only when var.enable_inference=true)
@@ -508,15 +526,9 @@ resource "azurerm_machine_learning_online_deployment" "blue" {
 }
 ```
 
-Equivalent `az` CLI:
+Both the endpoint and deployment are fully managed via Terraform — no manual CLI steps needed.
 
-```bash
-az ml online-endpoint create --file infra/endpoints/endpoint.yaml   # auth_mode: key
-az ml online-deployment create --file infra/endpoints/blue.yaml --all-traffic
-az ml online-endpoint invoke --name tw-sentiment --request-file sample-request.json
-```
-
-### 10.2 Scoring script (`score.py`)
+### 9.2 Scoring script (`score.py`)
 
 ```python
 # infra/endpoints/scoring/score.py
@@ -541,104 +553,102 @@ def run(raw_data):
 
 Include `requirements.txt` pinning `mlflow`, `transformers`, `torch`, `lightning`.
 
-### 10.3 Non-prod guardrails
+### 9.3 Non-prod guardrails
 
-- `instance_count=0` or `scale min 0` when idle (`az ml online-endpoint update --traffic "blue=0"` + stop).
-- Key auth only for demo; rotate via `az ml online-endpoint get-credentials`.
-- Monitor cost: endpoint idle ≈ $0.09/h for DS2_v2; delete after demo (`az ml online-endpoint delete`).
+- `instance_count=0` or `scale min 0` when idle — controlled via Terraform `var.enable_inference` toggle.
+- Key auth only for demo; rotate via `az ml online-endpoint get-credentials` (operational step).
+- Monitor cost: endpoint idle ≈ $0.09/h for DS2_v2; tear down via `terraform destroy -target=module.ml_inference` after demo.
 - Document `curl` + `mlflow deployments predict` both.
 
 ---
 
-## 11. IAM, Security & Networking
+## 10. IAM, Security & Networking
 
-| Area          | Dev Plan                                                                                                                             | Prod Hardening (future)                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| **Auth**      | `az login` (user), managed identity for compute/endpoint                                                                             | Service Principal / OIDC federated creds for Terraform                                           |
-| **RBAC**      | User = `Contributor` on RG + `AzureML Data Scientist` on WS; Workspace MSI = `Storage Blob Data Contributor` on SA, `AcrPull` on ACR | Custom roles, least-privilege, break-glass                                                       |
-| **Key Vault** | Soft-delete 7d, purge protection OFF (easy cleanup)                                                                                  | ON, 90d retention, RBAC mode                                                                     |
-| **Network**   | `public_network_access_enabled=true` for learning                                                                                    | VNet injection, Private Endpoints for SA/KV/ACR/WS, `allow_public_access_when_behind_vnet=false` |
-| **Secrets**   | `MLFLOW_TRACKING_URI` output, SA keys not used (identity)                                                                            | Store `HF_TOKEN` (if private models) in KV, inject via `key_vault_secrets`                       |
-| **Data**      | `.gitignore` keeps `data/` local; blob private                                                                                       | Defender for Storage, immutability for raw                                                       |
+| Area          | Dev Plan                                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Auth**      | `az login` (user), managed identity for compute/endpoint                                                                             |
+| **RBAC**      | User = `Contributor` on RG + `AzureML Data Scientist` on WS; Workspace MSI = `Storage Blob Data Contributor` on SA, `AcrPull` on ACR |
+| **Key Vault** | Soft-delete 7d, purge protection OFF (easy cleanup)                                                                                  |
+| **Network**   | `public_network_access_enabled=true` for learning                                                                                    |
+| **Secrets**   | `MLFLOW_TRACKING_URI` output, SA keys not used (identity)                                                                            |
+| **Data**      | `.gitignore` keeps `data/` local; blob private                                                                                       |
 
-Terraform handles `azurerm_key_vault_access_policy` / `azurerm_role_assignment`. For learning, simplest is `az ad signed-in user → role assignments`; plan notes both.
-
----
-
-## 12. Cost Control
-
-**Estimated monthly cost (dev, idling):**
-
-| Resource                                     | SKU          | Est. $/mo (W. Europe) | Notes                               |
-| -------------------------------------------- | ------------ | --------------------- | ----------------------------------- |
-| Resource Group                               | —            | $0                    |                                     |
-| Storage 50GB LRS                             | Standard_LRS | ~$1                   | + versioning, ops                   |
-| Log Analytics 1GB/d                          | PerGB2018    | ~$2-5                 | Set daily cap 1GB                   |
-| App Insights                                 | —            | $0 (via LAW)          | Sampling 10%                        |
-| ACR Basic                                    | Basic        | ~$5                   | Or delete when not building         |
-| AML Workspace                                | —            | $0                    | Pay-per-compute                     |
-| Compute Cluster (0 nodes idle)               | Spot T4      | $0 when scaled to 0   | Biggest saver: `min=0`, `idle=300s` |
-| Compute Instance (8h/day)                    | DS3_v2       | ~$30                  | Shut down nights; auto-shutdown 30m |
-| Online Endpoint (when enabled, 1×DS2_v2 24h) | DS2_v2       | ~$70                  | Enable only for demo hours          |
-| **Total idle (no endpoint)**                 |              | **~$10-40**           |                                     |
-| **Total with active training (10h T4 spot)** |              | **+ $1.70**           |                                     |
-| **Total with endpoint always on**            |              | **~$80-110**          |                                     |
-
-**Savings levers:**
-
-1. `scale_settings { min_node_count=0 }` — already in plan.
-2. Spot (`LowPriority`) — 60-70% discount; fine for fault-tolerant training (checkpointing handles preemption).
-3. Nightly `az ml compute stop` / Terraform `enable_compute=false` variable.
-4. Delete endpoint after demo; keep model registry.
-5. `Standard_LRS` + Cool tier after 30d.
-
-Set `Budget Alert` at $25 / $50 via `azurerm_consumption_budget_resource_group` (optional).
+**All IAM, role assignments, and access policies are managed via Terraform** — no ad-hoc `az role assignment create` or `az keyvault set-policy` commands. Role assignments live in the same module as the resource they grant access to (e.g., `modules/ml_compute/main.tf` for workspace MSI roles, `modules/storage/main.tf` for SA roles). The signed-in user's Contributor role on the RG is assumed pre-existing (created via Azure portal during subscription setup) and not part of the Terraform state.
 
 ---
 
-## 13. CI/CD & Local Dev Workflow
+## 11. Cost Control
+
+This is a learning project — every resource is chosen to be as cheap as possible while still useful. The main cost driver is compute time; everything else is negligible in comparison.
+
+### Compute
+
+- Compute clusters scale to **zero nodes** (`min_node_count=0`, `scale_down_nodes_after_idle_duration=PT5M`). You pay nothing when idle.
+- Use **spot VMs** (`LowPriority`) for training — 60-70% cheaper than dedicated. `ModelCheckpoint` handles preemption gracefully.
+- Keep `Standard_NC4as_T4_v3` (T4) as default; only switch to V100/A100 for a final sweep if needed.
+- Compute instances auto-shutdown after 30 min of idle. Stop them explicitly overnight to avoid surprises.
+
+### Storage & Services
+
+- `Standard_LRS` — replication overhead is unnecessary for a learning project.
+- Log Analytics daily cap at 1 GB and retention at 30 days.
+- Container soft-delete 7 days on blob storage — enough to recover accidental deletes without paying for long retention.
+
+### Inference endpoint
+
+- Gate behind `var.enable_inference` so `terraform apply` never creates it by accident.
+- Scale to zero or delete after demo hours. An idle DS2_v2 endpoint adds meaningful cost for no benefit.
+
+### Safety net
+
+- A `Budget Alert` at $25 / $50 via `azurerm_consumption_budget_resource_group` is created using Terraform
+
+---
+
+## 12. CI/CD & Local Dev Workflow
 
 **Local (day-1):**
 
 ```bash
-# 1. Auth
+# 0. Auth
 az login
 az account set --subscription <id>
 
-# 2. Deploy infra (via Terraform HCP)
+# 1. Deploy infra (via Terraform HCP)
 #    Push to `dev` -> HCP triggers `terraform plan` -> approve -> apply
 cd infra/terraform
 terraform fmt -check && terraform validate
 
-# 3. Upload data (after apply)
-az storage blob upload-batch -d raw --account-name <st> -s data/raw
-az ml data create --file infra/data/twitter-splits.yaml  # points to blob
+# 2. Upload data (operational step — data lives in Terraform-managed storage)
+azcopy copy data/raw/* blob.core.windows.net/<st>/raw
+# Register data assets in AML
+az ml data create --file infra/data/twitter-splits.yaml
 
-# 4. Train
-export MLFLOW_TRACKING_URI=<workspace mlflow_tracking_uri from HCP outputs>
-mlflow experiments create -n twitter-sentiment  # or via workspace UI
+# 3. Train
+export MLFLOW_TRACKING_URI=<from terraform output>
 az ml job create --file infra/jobs/job-clf-sbert.yaml
 
-# 5. Register & deploy (later)
-az ml model create --name twitter-sbert-clf --type mlflow_model --path azureml://jobs/<job>/outputs/artifacts/model
-az ml online-endpoint create --file infra/endpoints/endpoint.yaml
+# 4. Register model & deploy
+mlflow register-model runs:/<run_id>/model twitter-sbert-clf
+# Endpoint is created by Terraform when var.enable_inference=true
 ```
 
 **CI (Terraform HCP):**
 
 - Push to `dev` triggers Terraform HCP to run `terraform plan`; a human approves and applies.
-- (`terraform fmt`/`validate`/`tflint` can run locally or in a pre-commit hook.)
-- `az ml` CLI invoked from Docker job runner (same image as `Dockerfile`).
+- `terraform fmt`/`validate`/`tflint` runs in a pre-commit hook.
+- AML operational commands (`az ml job`, `az ml data`) run from the Docker dev container (same image as `Dockerfile`).
 
 No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE_SUBSCRIPTION_ID`.
 
 ---
 
-## 14. Implementation Roadmap (Phases)
+## 13. Implementation Roadmap (Phases)
 
 ### Phase 1 — Terraform scaffolding (this plan → code)
 
 - [ ] Create `infra/terraform/{versions,variables,main,outputs}.tf` + `modules/*` per §5
+- [ ] Add `azurerm_consumption_budget_resource_group` ($25 / $50 alert thresholds)
 - [ ] Add `terraform.tfvars.example`, `environments/dev.tfvars`
 - [ ] Add pre-commit hooks:
   - `terraform fmt`, `tflint` before every commit
@@ -650,16 +660,16 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 ### Phase 2 — Data on Azure
 
 - [ ] `terraform apply -target=module.storage` (or full apply — decision)
-- [ ] `azcopy` / `az storage blob upload-batch` for `data/raw` + `data/splits`
-- [ ] `az ml data create` for `twitter-raw:1`, `twitter-splits:1` (keep `data/splits/tweets_*.csv` schema)
-- [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally with `az ml data show`
+- [ ] `azcopy` to upload `data/raw` + `data/splits` to Terraform-managed containers
+- [ ] Register `twitter-raw:1`, `twitter-splits:1` as AML Data Assets (operational step)
+- [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally
 
 ### Phase 3 — MLflow + Training on AML
 
 - [ ] Add `MLFlowLogger` to `configs/defaults.yaml` (or task configs) + conditional `MLFLOW_TRACKING_URI`
 - [ ] Update `twitter/modules.py` to support MLflow figure logging fallback
 - [ ] Create `infra/environments/twitter-ml-env.yaml` + `Dockerfile`
-- [ ] `az ml environment create` + `az ml compute create` (via Terraform or CLI)
+- [ ] `terraform apply` provisions compute cluster; register AML environment (operational step)
 - [ ] Submit `job-clf-sbert.yaml` on `cluster-gpu-spot` (T4 spot), check MLflow UI (`azureml://...`)
 - [ ] Repeat for `reg` + `multitask` + `lightgbm` (CPU cluster)
 
@@ -667,26 +677,26 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ### Phase 4 — Model Registry & Inference (non-prod)
 
-- [ ] `mlflow.register_model` or `az ml model create --type mlflow_model`
+- [ ] `mlflow.register_model` to the MLflow model registry
 - [ ] Build `infra/endpoints/scoring/{score.py,requirements.txt}`
 - [ ] Toggle `var.enable_inference=true` → `terraform apply` adds `online_endpoint` + `deployment`
-- [ ] `az ml online-endpoint invoke` smoke test + delete/scale-to-0 after
+- [ ] Smoke test endpoint with `curl` + `mlflow deployments predict`
 
 **Success:** `curl` returns `{"prediction":1,"label":"neutral"}` for sample tweet; cost < $1 for test.
 
 ### Phase 5 — Hardening & Cleanup
 
 - [ ] Add `azurerm_consumption_budget`, `azurerm_monitor_diagnostic_setting`
-- [ ] Document teardown: `terraform destroy -var-file=environments/dev.tfvars` + `az ml data delete` if needed
+- [ ] Document teardown: `terraform destroy -var-file=environments/dev.tfvars`
 - [ ] Update `README.md` with Azure Quickstart + `docs/azure-infrastructure-plan.md` link
 
 ---
 
-## 15. Risks & Open Decisions
+## 14. Risks & Open Decisions
 
 | Risk / Decision                                                                                          | Impact | Mitigation / Recommendation                                                                          |
 | -------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| **MLflow version skew** — AML supports `mlflow 2.9–2.13` (check). Local `mlflow` latest may mismatch     | Low    | Pin `mlflow==2.12.0` in `requirements.txt` after checking `az ml workspace show` supported versions  |
+| **MLflow version skew** — AML supports `mlflow 2.9–2.13` (check). Local `mlflow` latest may mismatch     | Low    | Pin `mlflow==2.12.0` in `requirements.txt` after checking supported versions via `terraform output` or Azure portal  |
 | **T4 spot preemption** during 10-epoch S-BERT fine-tune (≈ 15 min)                                       | Low    | `ModelCheckpoint` every epoch + spot `eviction_policy=Deallocate`; retry job automatically           |
 | **Data size 8k tweets ~ <10MB** but `tiktoken` + `openai` LLM baseline uses Foundry (not AML)            | Low    | Keep LLM baseline local; only `clf/reg` on AML. Mention in docs.                                     |
 | **Endpoint cost surprise**                                                                               | High   | Default `enable_inference=false`; gate deployment behind variable + manual `apply`; set budget alert |
@@ -694,7 +704,7 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ---
 
-## 16. Terraform Snippets (Illustrative)
+## 15. Terraform Snippets (Illustrative)
 
 *All snippets are plan-level — not to be applied without review. Syntax validated against `hashicorp/azurerm >=3.100`.*
 
@@ -761,9 +771,44 @@ output "mlflow_tracking_uri"   { value = module.ml_workspace.mlflow_tracking_uri
 output "acr_login_server"      { value = module.acr.login_server }
 ```
 
+### IAM role assignments — `modules/ml_compute/main.tf` (excerpt)
+
+All role assignments are Terraform-managed. The workspace MSI gets its roles in the same module that creates the compute, so `depends_on` ordering is implicit.
+
+```hcl
+data "azurerm_client_config" "current" {}
+
+# Workspace system-assigned managed identity
+data "azurerm_machine_learning_workspace" "this" {
+  name                = var.workspace_name
+  resource_group_name = var.resource_group_name
+}
+
+# Workspace MSI → Storage Blob Data Contributor (needed to read/write datasets + model artifacts)
+resource "azurerm_role_assignment" "ws_msi_storage" {
+  scope                = var.storage_account_id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_machine_learning_workspace.this.identity[0].principal_id
+}
+
+# Workspace MSI → AcrPull (pull training/inference images)
+resource "azurerm_role_assignment" "ws_msi_acr" {
+  scope                = var.container_registry_id
+  role_definition_name = "AcrPull"
+  principal_id         = data.azurerm_machine_learning_workspace.this.identity[0].principal_id
+}
+
+# Signed-in user → AzureML Data Scientist on workspace (required for az ml jobs)
+resource "azurerm_role_assignment" "user_ml_ds" {
+  scope                = var.workspace_id
+  role_definition_name = "AzureML Data Scientist"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+```
+
 ---
 
-## 17. Appendices
+## 16. Appendices
 
 ### A. Glossary
 
@@ -772,7 +817,7 @@ output "acr_login_server"      { value = module.acr.login_server }
 | **AML**                     | Azure Machine Learning (service). Workspace is the top-level object binding storage/KV/ACR/App Insights. |
 | **Data Asset**              | AML-registered dataset (`azureml:twitter-splits:1`), versioned, backs lineage                            |
 | **Datastore**               | AML pointer to a Storage Account container (WASBS)                                                       |
-| **Command Job**             | Batch training job (`az ml job create`) with `command:` + `code:` + `inputs:` + `compute:`               |
+| **Command Job**             | Batch training job with `command:` + `code:` + `inputs:` + `compute:` (provisioned via Terraform)          |
 | **MLflow Tracking URI**     | URI like `azureml://...` or `https://<ws>.ml.azure.com` that `mlflow` SDK uses to log                    |
 | **Managed Online Endpoint** | AML-hosted HTTPS endpoint (Kubernetes-free) with auth key, auto-scaling                                  |
 
@@ -785,7 +830,10 @@ output "acr_login_server"      { value = module.acr.login_server }
 
 ### C. Explicit non-goals (this plan does NOT do)
 
-- No `terraform apply` / `az` creation — plan only.
 - No production hardening (VNet, Private Link, multi-env prod, SLA endpoint).
 - No migration of `lightning_logs/` history — new runs go to MLflow/AML.
 - No change to `gradio` label game or `topic analysis` — out of scope.
+
+### D. References
+
+- <https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/machine_learning_datastore_blobstorage>
