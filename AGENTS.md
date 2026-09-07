@@ -3,3 +3,4 @@
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - This project does not use jupyter notebooks. Scripts with `click` based CLI are always preferred.
 - This project uses Terraform HCP, so terraform cannot be run locally. Instead, a push to the `dev` branch triggers terrafrom hcp to create a plan, which then has to be approved and applied by a human. There are no guarantees on how fast a human will be available to do this.
+- Git pushes should go to the `dev` branch of the `origin-http` remote.

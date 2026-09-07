@@ -17,9 +17,11 @@ RUN npx playwright install-deps chromium
 RUN curl -fsSL https://opencode.ai/install | bash
 
 # Install python packages
-COPY requirements.txt .
+COPY requirements-shared.txt .
+COPY requirements-local.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements-shared.txt \
+    pip install --no-cache-dir -r requirements-local.txt
 
 # Install agent vault
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://get.agent-vault.dev | sh
