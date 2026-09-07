@@ -1,9 +1,6 @@
 # Azure ML Infrastructure Plan — Twitter Sentiment Project
 
-> **Date:** 2026-09-01
-> **Status:** Planning only — no Azure resources have been created
-> **Scope:** `docs/improvement-plan.md` → Infrastructure: *Store dataset in Azure · Train and store models on Azure · Use mlflow · Try inference endpoint (non-production)*
-> **Author:** Automated plan generation from local repo inspection (`compose.yaml`, `Dockerfile`, `AGENTS.md`, `requirements.txt`, `twitter/`, `configs/`, `data/`)
+> **Date:** 2026-09-06
 
 ---
 
@@ -31,22 +28,21 @@
 
 ## 1. Overview & Goals
 
-**Context from `docs/improvement-plan.md:46-53`:** The project is a Saarland University ML competition codebase (Twitter sentiment classification + valence regression, ~8k tweets, heavy class imbalance 6% negative). No production intent — goal is learning ML platform technologies.
+The project is originally a ML competition codebase (Twitter sentiment classification + valence regression, ~8k tweets, heavy class imbalance 6% negative). This plan outlines how to port it to Azure cloud infrastructure. No production intent — goal is learning ML platform technologies.
 
 **Hard requirements:**
 
 | ID | Requirement                   | Success Criteria                                                                                                                                                                     |
-| -- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| -- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | R1 | Store dataset in Azure        | Raw + splits in versioned Azure Storage, registered as Azure ML Data Assets, reproducible `TwitterDataModule(root_dir=...)` without local `data/`                                    |
 | R2 | Train & store models on Azure | `python -m twitter.main` equivalent runs as `az ml job` on Azure ML compute, checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud                            |
-| R3 | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). `requirements.txt:26` already lists `mlflow`; integrate `lightning.pytorch.loggers.MLFlowLogger` |
+| R3 | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). integrate `lightning.pytorch.loggers.MLFlowLogger`                                               |
 | R4 | Inference endpoint (explore)  | Deploy one registered model to a Managed Online Endpoint (non-prod, 0/1 instance, key auth) with `score.py` that wraps `AutoTokenizer` + `TransformerClassifier`                     |
 
 **Constraints:**
 
-- Plan only — no `az`/`terraform apply` side-effects now.
-- Terraform 1.16.0 already in `Dockerfile:21-23` (`FROM python:3.12-slim` + `hashicorp/terraform/1.16.0`). Reuse it.
-- Keep local Docker/Compose DX (`compose.yaml:1-11`, `AGENTS.md:1`). Don’t break `pytest`/`ruff` workflow.
+- Terraform runs via Terraform HCP (triggered on `git push` to `dev`); no local terraform install needed (see `AGENTS.md`).
+- Keep local Docker/Compose DX (`compose.yaml`, `AGENTS.md`). Don’t break `pytest`/`ruff` workflow.
 - Budget: learning project → cheapest viable SKUs, auto-shutdown, spot.
 - VRAM limit from later plan step: `≤24GB VRAM` per model → compute choice must respect it.
 - NAT gateways are expensive → avoid them.
@@ -57,15 +53,15 @@
 
 | Area            | Current State                                                                                                                                                                                 | File                                                                      |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Runtime**     | `python:3.12-slim`, `pip install -r requirements.txt`, user `agent:1000`, `opencode` + `hermes` baked in                                                                                      | `Dockerfile:1-36`                                                         |
-| **Dev loop**    | `compose.yaml` builds `dev` service, bind-mounts `.:/workspace`, persists `~/.hermes`, `~/.config/opencode`                                                                                   | `compose.yaml:1-11`                                                       |
-| **Python deps** | `torch` (CPU wheel), `lightning`, `transformers`, `tiktoken`, `openai`, `mlflow` (present but unused), `lightgbm`, `tensorboard`                                                              | `requirements.txt:1-29`                                                   |
-| **Data**        | `data/raw/tweets_train.csv`, `data/splits/tweets_{train,dev,test_*}*.csv`, `data/augmentation/`, `data/external/` — all **gitignored**                                                        | `.gitignore:2`, `data/` listing                                           |
-| **Config**      | `LightningCLI` with `configs/defaults.yaml` (trainer=null logger) + `configs/data.yaml` (`root_dir: data/splits/`) + `configs/tasks/{clf,reg,multitask,scl}.yaml` + `configs/encoders/*.yaml` | `twitter/main.py:3-16`, `configs/`                                        |
-| **Data code**   | `TwitterDataModule(root_dir, features, labels, encoder_name, batch_size, ...)` loads `tweets_{split}.csv`; supports `ExternalTextDataset`                                                     | `twitter/data.py:223-417`                                                 |
-| **Model code**  | `TransformerEncoder` (HF `AutoModel`), `TransformerRegressor/Classifier`, `MultiTaskModule`, `SupervisedContrastive*`; metrics via `torchmetrics`                                             | `twitter/models.py`, `twitter/modules.py:20-441`                          |
-| **Logging**     | `trainer.logger: null` in `defaults.yaml:9`; manual `TensorBoard` via `self.logger.experiment.add_text/figure`                                                                                | `configs/defaults.yaml:9`, `twitter/modules.py:79-118`, `README.md:74-79` |
-| **Terraform**   | **None** on disk (`glob **/*.tf` = 0). Binary present in image. No state backend yet.                                                                                                         | `glob` result                                                             |
+| **Runtime**     | `python:3.12-slim`, `pip install -r requirements.txt`, user `agent:1000`, `opencode` + `hermes` baked in                                                                                      | `Dockerfile`                                                              |
+| **Dev loop**    | `compose.yaml` builds `dev` service, bind-mounts `.:/workspace`, persists `~/.hermes`, `~/.config/opencode`                                                                                   | `compose.yaml`                                                            |
+| **Python deps** | `torch` (CPU wheel), `lightning`, `transformers`, `tiktoken`, `openai`, `mlflow` (present but unused), `lightgbm`, `tensorboard`                                                              | `requirements.txt`                                                        |
+| **Data**        | `data/raw/tweets_train.csv`, `data/splits/tweets_{train,dev,test_*}*.csv`, `data/augmentation/`, `data/external/` — all **gitignored**                                                        | `.gitignore`, `data/` listing                                             |
+| **Config**      | `LightningCLI` with `configs/defaults.yaml` (trainer=null logger) + `configs/data.yaml` (`root_dir: data/splits/`) + `configs/tasks/{clf,reg,multitask,scl}.yaml` + `configs/encoders/*.yaml` | `twitter/main.py`, `configs/`                                             |
+| **Data code**   | `TwitterDataModule(root_dir, features, labels, encoder_name, batch_size, ...)` loads `tweets_{split}.csv`; supports `ExternalTextDataset`                                                     | `twitter/data.py`                                                         |
+| **Model code**  | `TransformerEncoder` (HF `AutoModel`), `TransformerRegressor/Classifier`, `MultiTaskModule`, `SupervisedContrastive*`; metrics via `torchmetrics`                                             | `twitter/models.py`, `twitter/modules.py`                                 |
+| **Logging**     | `trainer.logger: null` in `configs/defaults.yaml`; manual `TensorBoard` via `self.logger.experiment.add_text/figure`                                                                          | `configs/defaults.yaml`, `twitter/modules.py`, `README.md`                |
+| **Terraform**   | `infra/terraform/infra.tf` contains current configuration but may be restructured. Terraform HCP runs plan and apply and triggers on `git push`.                                              | `infra/terraform/infra.tf`                                                |
 | **MLflow**      | Listed as dep, **zero imports** in `twitter/` (`grep mlflow` → 2 hits only in docs). Opportunity for swap.                                                                                    | `grep`                                                                    |
 
 **Implication:** The migration is mostly *configuration* — add logger, upload data, wrap training as AML job. No model code rewrite required except making `root_dir` + logger injectable.
@@ -79,12 +75,12 @@
 ```mermaid
 flowchart TB
     subgraph Local["Local Dev (Docker / compose.yaml)"]
-        DEV["dev container\npython:3.12 + terraform 1.16\nopencode / hermes"]
+        DEV["dev container\npython:3.12\nopencode / hermes"]
         CODE["twitter/ + configs/"]
         GIT["git"]
     end
 
-    subgraph AzureRG["Azure Resource Group: rg-twitter-ml-dev-westeu"]
+    subgraph AzureRG["Azure Resource Group: rg-twitter-ml"]
         ST["Storage Account\nsttwittermlXXXX\ncontainers: raw/splits/external/models"]
         KV["Key Vault\nkv-twitter-ml-XXXX"]
         ACR["Container Registry\ncrtwittermlXXXX"]
@@ -104,13 +100,13 @@ flowchart TB
             COMP_INST["Compute Instance\nci-dev (dev/test)"]
             JOB["Command Job\ntwitter-train-clf: xlm-roberta\nmlflow logging"]
             REG["Model Registry\ntwitter-bert-clf:3\n+ MLflow registry"]
-            EP["Managed Online Endpoint\ntw-sentiment-dev\n(deployment: blue, 0-1 inst)"]
+            EP["Managed Online Endpoint\ntw-sentiment\n(deployment: blue, 0-1 inst)"]
         end
 
         MLFLOW["MLflow Tracking\n(Workspace-managed)\nMLFLOW_TRACKING_URI=https://<ws>.ml.azure.com"]
     end
 
-    DEV -- "az login / terraform apply" --> AzureRG
+    DEV -- "git push dev -> HCP plan/apply" --> AzureRG
     CODE -- "az ml data create / job create\n+ mlflow logging" --> WS
     CODE -- "docker build -> ACR" --> ACR
     ST -- "blob mount / download" --> COMP_CLUSTER
@@ -134,7 +130,7 @@ sequenceDiagram
     participant EP as Online Endpoint
 
     Dev->>SA: azcopy / az ml data create --type uri_folder (raw + splits)
-    Dev->>WS: az ml environment create (Dockerfile / conda)
+    Dev->>WS: az ml environment create (Dockerfile / pip)
     Dev->>WS: az ml data create --name twitter-splits --version 1
     Dev->>WS: az ml job create training-job.yaml (command)
     WS->>CC: schedule job (queue, spot)
@@ -151,25 +147,24 @@ sequenceDiagram
 
 ## 4. Azure Resources — Inventory
 
-All resources in **one resource group** for cost visibility + easy teardown (learning project). Region: `West Europe` (or `Sweden Central` for lower latency if organizer prefers; pick one and pin via variable). Naming: lowercase alphanumeric, globally unique suffix `${random_id}`.
+All resources in **one resource group** for cost visibility + easy teardown (learning project). Region: `West Europe`. Naming: lowercase alphanumeric.
 
 | #  | Terraform Resource Type                                                        | Name pattern                             | Purpose                                                        | SKU / Notes                                                                                                                                                                       |
-| -- | ------------------------------------------------------------------------------ | ---------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1  | `azurerm_resource_group`                                                       | `rg-twitter-ml-${env}-${location_short}` | Container for all resources                                    | Tags: `project=twitter-sentiment`, `env=dev`, `owner=<you>`                                                                                                                       |
-| 2  | `azurerm_storage_account`                                                      | `sttwitterml${random}${env}`             | Blob for datasets, checkpoints, external augmentations         | `Standard_LRS`, `kind=StorageV2`, `allow_blob_public_access=false`, `min_tls_version=TLS1_2`, versioning ON, container soft-delete 7d                                             |
+| -- | ------------------------------------------------------------------------------ | ------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | `azurerm_resource_group`                                                       | `rg-twitter-ml`                          | Container for all resources                                    | Tags: `project=twitter-sentiment`, `env=dev`, `owner=<you>`                                                                                                                       |
+| 2  | `azurerm_storage_account`                                                      | `sttwitterml`                            | Blob for datasets, checkpoints, external augmentations         | `Standard_LRS`, `kind=StorageV2`, `allow_blob_public_access=false`, `min_tls_version=TLS1_2`, versioning ON, container soft-delete 7d                                             |
 | 3  | `azurerm_storage_container` (×4)                                               | `raw`, `splits`, `external`, `models`    | Logical separation mirroring local `data/*`                    | `container_access_type=private`                                                                                                                                                   |
 | 4  | `azurerm_storage_management_policy`                                            | —                                        | Lifecycle: transition to Cool after 30d, delete temp after 90d | Saves cost for old logs                                                                                                                                                           |
-| 5  | `azurerm_log_analytics_workspace`                                              | `log-twitter-ml-${env}`                  | Backend for App Insights                                       | `PerGB2018`, retention 30d (lowest)                                                                                                                                               |
-| 6  | `azurerm_application_insights`                                                 | `appi-twitter-ml-${env}`                 | Required by AML workspace                                      | `application_type=other`, `workspace_id` → LAW                                                                                                                                    |
-| 7  | `azurerm_key_vault`                                                            | `kv-twitter-ml-${random}`                | Secrets (MLflow keys, Storage keys)                            | `sku=standard`, `purge_protection_enabled=false` for dev (true in prod)                                                                                                           |
-| 8  | `azurerm_container_registry`                                                   | `crtwitterml${random}${env}`             | Custom training & inference Docker images                      | `Basic` SKU (≈ $0.17/day), `admin_enabled=false` (use managed identity)                                                                                                           |
-| 9  | `azurerm_machine_learning_workspace`                                           | `mlw-twitter-sentiment-${env}`           | Core AML                                                       | `kind=default`, `storage_account_id`, `key_vault_id`, `application_insights_id`, `container_registry_id`, `public_network_access_enabled=true` (simpler for learning; VNet later) |
+| 5  | `azurerm_log_analytics_workspace`                                              | `log-twitter-ml`                         | Backend for App Insights                                       | `PerGB2018`, retention 30d (lowest)                                                                                                                                               |
+| 6  | `azurerm_application_insights`                                                 | `appi-twitter-ml`                        | Required by AML workspace                                      | `application_type=other`, `workspace_id` → LAW                                                                                                                                    |
+| 7  | `azurerm_key_vault`                                                            | `kv-twitter-ml`                          | Secrets (MLflow keys, Storage keys)                            | `sku=standard`, `purge_protection_enabled=false` for dev (true in prod)                                                                                                           |
+| 8  | `azurerm_container_registry`                                                   | `crtwitterml`                            | Custom training & inference Docker images                      | `Basic` SKU (≈ $0.17/day), `admin_enabled=false` (use managed identity)                                                                                                           |
+| 9  | `azurerm_machine_learning_workspace`                                           | `mlw-twitter-sentiment`                  | Core AML                                                       | `kind=default`, `storage_account_id`, `key_vault_id`, `application_insights_id`, `container_registry_id`, `public_network_access_enabled=true` (simpler for learning; VNet later) |
 | 10 | `azurerm_machine_learning_compute_cluster`                                     | `cluster-gpu-spot` + `cluster-cpu`       | Training                                                       | See §4.1 — spot, 0→1 min nodes, idle 300s                                                                                                                                         |
 | 11 | `azurerm_machine_learning_compute_instance` (optional)                         | `ci-dev`                                 | Interactive debugging / notebook                               | `Standard_DS3_v2`, `idle_time_before_shutdown=30` min                                                                                                                             |
 | 12 | `azurerm_role_assignment` (×N)                                                 | —                                        | Least-privilege                                                | Workspace MSI → `Storage Blob Data Contributor` on SA; user → `AzureML Data Scientist` on WS                                                                                      |
-| 13 | *(Future)* `azurerm_machine_learning_online_endpoint`                          | `tw-sentiment-${env}`                    | Managed Online Endpoint                                        | `auth_mode=key`, `public_network_access_enabled=true` for demo                                                                                                                    |
+| 13 | *(Future)* `azurerm_machine_learning_online_endpoint`                          | `tw-sentiment`                           | Managed Online Endpoint                                        | `auth_mode=key`, `public_network_access_enabled=true` for demo                                                                                                                    |
 | 14 | *(Future)* `azurerm_machine_learning_online_deployment`                        | `blue`                                   | Deployment for registered model                                | `instance_type=Standard_DS2_v2`, `instance_count=1`, `scale` min 0 for cost                                                                                                       |
-| 15 | *(State)* `azurerm_storage_account` + `azurerm_storage_container` for TF state | `sttfstate… / tfstate`                   | Remote backend (not in same SA to avoid cycles)                | Or reuse LAW-region SA + `backend "azurerm"` in `terraform {}`                                                                                                                    |
 
 ### 4.1 Compute sizing (maps to ≤24GB VRAM requirement)
 
@@ -179,7 +174,7 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 | `cluster-gpu-spot` (primary)        | `Standard_NC4as_T4_v3`                                  | 4 / 28GB / 1× T4            | 16 GB      | `sentence-bert`, `distilbert`, `twihn` (~110-250M params) fine-tune batch 8-16 | ~$0.53/h, spot ~$0.17                                   |
 | `cluster-gpu-spot-large` (optional) | `Standard_NC6s_v3` (V100) or `Standard_NC24ads_A100_v4` | 6-24 / 112GB / 1× V100/A100 | 16 / 80 GB | Larger `xlm-roberta-large` if beating 0.79 F1                                  | V100 ~$3.06/h, A100 ~$3.67/h — use only for final sweep |
 
-*Rule:* Default to T4 cluster (`enable_node_public_ip=false`, `scale_settings { min_node_count=0, max=4, scale_down_idle_minutes=5 }`). The plan explicitly **allows switching SKU via `var.compute_vm_size`** without Terraform re-create (use `terraform apply -var=...`).
+*Rule:* Default to T4 cluster (`enable_node_public_ip=false`, `scale_settings { min_node_count=0, max=4, scale_down_idle_minutes=5 }`). The plan explicitly **allows switching SKU via `var.compute_vm_size`** without Terraform re-create (set the variable, then apply goes through HCP).
 
 ---
 
@@ -190,8 +185,7 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 ```text
 infra/
 ├── terraform/
-│   ├── README.md                         # how to init/plan/apply
-│   ├── backend.hcl                       # partial backend config (storage account for state)
+│   ├── README.md                         # how to plan/apply (via Terraform HCP)
 │   ├── versions.tf                       # required_version 1.16.0, azurerm ~>3.100, random
 │   ├── variables.tf                      # env, location, prefix, vm sizes
 │   ├── locals.tf                         # naming, tags, suffix
@@ -227,34 +221,11 @@ infra/
 │   # └── modules/ml_inference/  # online endpoint + deployment (count = var.enable_inference ? 1 : 0)
 ```
 
-**Why modules?** `docs/improvement-plan.md:53` says *“The plan mentions terraform. Include terraform resources/modules intended (resource group, storage, workspace, compute, etc.)”* — modules make `main.tf` readable and let us toggle inference via `enable_inference`.
+**Why modules?** Modules make `main.tf` readable and let us toggle inference via `enable_inference`.
 
-### 5.2 State backend (critical)
+Terraform state and plan/apply are handled by **Terraform HCP**, triggered on `git push` to `dev`; no local bootstrap or remote backend config is needed.
 
-```hcl
-# versions.tf
-terraform {
-  required_version = ">= 1.16.0"
-  required_providers {
-    azurerm = { source = "hashicorp/azurerm", version = ">= 3.100.0" }
-    random  = { source = "hashicorp/random", version = "~> 3.6" }
-  }
-  backend "azurerm" {}   # filled via -backend-config=backend.hcl
-}
-```
-
-`backend.hcl` (checked in **without secrets**):
-
-```hcl
-resource_group_name  = "rg-tfstate-twitter-ml"
-storage_account_name = "sttfstatetwitmldevXXXX"  # pre-created once via az cli or bootstrap
-container_name       = "tfstate"
-key                  = "dev.terraform.tfstate"
-```
-
-*Bootstrap alternative:* `terraform init -reconfigure` with `use_oidc=true` if using `az login`.
-
-### 5.3 Variables (excerpt)
+### 5.2 Variables (excerpt)
 
 ```hcl
 variable "env"              { type = string, default = "dev" }
@@ -267,7 +238,7 @@ variable "compute_max_nodes"{ type = number, default = 2 }
 variable "vm_priority"      { type = string, default = "LowPriority" } # Dedicated vs LowPriority (spot)
 ```
 
-### 5.4 Root wiring (`main.tf` sketch)
+### 5.3 Root wiring (`main.tf` sketch)
 
 ```hcl
 module "rg"         { source = "./modules/resource_group" }
@@ -302,7 +273,7 @@ module "ml_compute" {
 
 ### 6.2 How `TwitterDataModule` stays compatible
 
-- **Before:** `configs/data.yaml:4` `root_dir: "data/splits/"`
+- **Before:** `configs/data.yaml` `root_dir: "data/splits/"`
 - **After (cloud):** `root_dir: ${{inputs.splits}}` or `/mnt/data/splits` mounted from datastore. In `training-job.yaml`, map:
 
   ```yaml
@@ -347,13 +318,12 @@ AML workspace auto-creates `workspaceblobstore` pointing at its linked storage. 
 
 ## 7. MLflow Integration
 
-### 7.1 Strategy decision: **Use Azure ML’s managed MLflow** (zero self-host)
+### 7.1 Azure ML’s managed MLflow (zero self-host)
 
-| Option                                                   | Pros                                                                                          | Cons                                                | Verdict                                                           |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------- |
-| **A) Azure ML managed MLflow** (Workspace tracking URI)  | No infra, auto-backed by workspace SA+KV, UI in Azure ML studio, `mlflow` SDK works unchanged | Tied to workspace, older MLflow versions lag latest | **Recommended** — matches `requirements.txt:26` and learning goal |
-| B) Self-hosted MLflow on ACI/VM with Blob artifact store | Latest MLflow, portable                                                                       | Extra infra, TLS, DB, cost                          | Not needed for R3                                                 |
-| C) Databricks MLflow                                     | Overkill                                                                                      | Cost                                                | Reject                                                            |
+Overview:
+
+- Azure ML managed MLflow (Workspace tracking URI)
+- No infra, auto-backed by workspace SA+KV, UI in Azure ML studio, `mlflow` SDK works unchanged
 
 Implementation:
 
@@ -376,7 +346,7 @@ Implementation:
          log_model: true   # stores MLflow pyfunc + checkpoints
    ```
 
-   Add `MLFlowLogger` to all `configs/tasks/*.yaml` or default. Autolog can be added in `twitter/modules.py:187` (`mlflow.pytorch.autolog()` optional).
+   Add `MLFlowLogger` to all `configs/tasks/*.yaml` or default. Autolog can be added in `twitter/modules.py` (`mlflow.pytorch.autolog()` optional).
 
 3. **Code change (minimal):** In `twitter/modules.py`, allow `self.logger` to be `MLFlowLogger` (already duck-typed). Remove TensorBoard-only branches — keep `add_text/figure` but gate on logger type (MLflow logs via `logger.experiment.log_text` or `mlflow.log_figure`). Simpler: log confusion matrix as `mlflow.log_figure(fig, "confusion_matrix.png")`.
 
@@ -421,7 +391,7 @@ Register:
 
 ```bash
 az ml environment create --file infra/environments/twitter-ml-env.yaml
-# yaml contains: name: twitter-ml-env, version: 1, build: {path: .}, conda...
+# yaml contains: name: twitter-ml-env, version: 1, build: {path: .}, pip install -r requirements.txt
 ```
 
 *Alternative:* Use curated `mcr.microsoft.com/azureml/curated/lightning-pytorch:2.0-cuda11.8` + pip install delta — cheaper build time.
@@ -511,7 +481,7 @@ Naming: `twitter-{encoder}-{task}:{version}` e.g., `twitter-sbert-clf:2`, tags `
 ```hcl
 # modules/ml_inference/main.tf  (only when var.enable_inference=true)
 resource "azurerm_machine_learning_online_endpoint" "tw" {
-  name                = "tw-sentiment-${var.env}"
+  name                = "tw-sentiment"
   workspace_id        = var.workspace_id
   location            = var.location
   auth_mode           = "key"   # simple for demo; AAD later
@@ -531,7 +501,7 @@ resource "azurerm_machine_learning_online_deployment" "blue" {
   scale_settings { scale_type = "default" } # or target_utilization
 
   code_configuration {
-    code  = "../../src/scoring"      # contains score.py + conda.yaml
+    code  = "../../src/scoring"      # contains score.py + requirements.txt
     scoring_script = "score.py"
   }
   # liveness/readiness probe, request_timeout_ms=5000
@@ -543,7 +513,7 @@ Equivalent `az` CLI:
 ```bash
 az ml online-endpoint create --file infra/endpoints/endpoint.yaml   # auth_mode: key
 az ml online-deployment create --file infra/endpoints/blue.yaml --all-traffic
-az ml online-endpoint invoke --name tw-sentiment-dev --request-file sample-request.json
+az ml online-endpoint invoke --name tw-sentiment --request-file sample-request.json
 ```
 
 ### 10.2 Scoring script (`score.py`)
@@ -569,7 +539,7 @@ def run(raw_data):
     return {"prediction": int(pred), "label": ["negative","neutral","positive"][pred]}
 ```
 
-Include `conda.yaml` pinning `mlflow`, `transformers`, `torch`, `lightning`.
+Include `requirements.txt` pinning `mlflow`, `transformers`, `torch`, `lightning`.
 
 ### 10.3 Non-prod guardrails
 
@@ -635,35 +605,29 @@ Set `Budget Alert` at $25 / $50 via `azurerm_consumption_budget_resource_group` 
 az login
 az account set --subscription <id>
 
-# 2. Bootstrap tfstate (once)
-az group create -n rg-tfstate-twitter-ml -l westeurope
-az storage account create -n sttfstatetwitml$RANDOM -g rg-tfstate-twitter-ml --sku Standard_LRS
-az storage container create --account-name <name> -n tfstate
-
-# 3. Deploy infra (plan only first)
+# 2. Deploy infra (via Terraform HCP)
+#    Push to `dev` -> HCP triggers `terraform plan` -> approve -> apply
 cd infra/terraform
-terraform init -backend-config=backend.hcl
 terraform fmt -check && terraform validate
-terraform plan -var-file=environments/dev.tfvars -out=tfplan
-# terraform apply tfplan   # DO NOT run yet — plan says not to create resources yet
 
-# 4. Upload data (after apply)
+# 3. Upload data (after apply)
 az storage blob upload-batch -d raw --account-name <st> -s data/raw
 az ml data create --file infra/data/twitter-splits.yaml  # points to blob
 
-# 5. Train
-export MLFLOW_TRACKING_URI=$(terraform output -raw mlflow_tracking_uri)
+# 4. Train
+export MLFLOW_TRACKING_URI=<workspace mlflow_tracking_uri from HCP outputs>
 mlflow experiments create -n twitter-sentiment  # or via workspace UI
 az ml job create --file infra/jobs/job-clf-sbert.yaml
 
-# 6. Register & deploy (later)
+# 5. Register & deploy (later)
 az ml model create --name twitter-sbert-clf --type mlflow_model --path azureml://jobs/<job>/outputs/artifacts/model
 az ml online-endpoint create --file infra/endpoints/endpoint.yaml
 ```
 
-**CI (optional, future):**
+**CI (Terraform HCP):**
 
-- GitHub Action: `terraform fmt/validate/plan` on PR, `apply` on `main` manual dispatch.
+- Push to `dev` triggers Terraform HCP to run `terraform plan`; a human approves and applies.
+- (`terraform fmt`/`validate`/`tflint` can run locally or in a pre-commit hook.)
 - `az ml` CLI invoked from Docker job runner (same image as `Dockerfile`).
 
 No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE_SUBSCRIPTION_ID`.
@@ -672,20 +636,14 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ## 14. Implementation Roadmap (Phases)
 
-> Each phase ends with a `terraform plan` review. **Do not create Azure resources until Phase 1 is approved** (per instruction).
-
-### Phase 0 — Foundation (already solid, verify)
-
-- [ ] `pip install -r requirements.txt --break-system-packages` + `pytest` passes
-- [ ] `terraform fmt` / `ruff` clean
-- [ ] Confirm `mlflow` import works locally (`python -c "import mlflow; print(mlflow.__version__)"`)
-
 ### Phase 1 — Terraform scaffolding (this plan → code)
 
 - [ ] Create `infra/terraform/{versions,variables,main,outputs}.tf` + `modules/*` per §5
-- [ ] Add `backend.hcl`, `terraform.tfvars.example`, `environments/dev.tfvars`
-- [ ] `terraform init/validate/plan` (no apply) — review cost
-- [ ] Add pre-commit: `terraform fmt`, `tflint` (optional)
+- [ ] Add `terraform.tfvars.example`, `environments/dev.tfvars`
+- [ ] Add pre-commit hooks:
+  - `terraform fmt`, `tflint` before every commit
+  - `pytest` before every push
+- [ ] `git push origin-http dev` to trigger `terraform plan`
 
 **Exit:** `infra/terraform/README.md` explains `plan` vs `apply` + naming.
 
@@ -699,18 +657,18 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 ### Phase 3 — MLflow + Training on AML
 
 - [ ] Add `MLFlowLogger` to `configs/defaults.yaml` (or task configs) + conditional `MLFLOW_TRACKING_URI`
-- [ ] Update `twitter/modules.py:79-118` to support MLflow figure logging fallback
+- [ ] Update `twitter/modules.py` to support MLflow figure logging fallback
 - [ ] Create `infra/environments/twitter-ml-env.yaml` + `Dockerfile`
 - [ ] `az ml environment create` + `az ml compute create` (via Terraform or CLI)
 - [ ] Submit `job-clf-sbert.yaml` on `cluster-gpu-spot` (T4 spot), check MLflow UI (`azureml://...`)
 - [ ] Repeat for `reg` + `multitask` + `lightgbm` (CPU cluster)
 
-**Success:** MLflow run shows `MulticlassF1Score` ≈ 0.75-0.79 and `MeanSquaredError` as before, but cloud-run.
+**Success:** MLflow run shows `MulticlassF1Score` and `MeanSquaredError`.
 
 ### Phase 4 — Model Registry & Inference (non-prod)
 
 - [ ] `mlflow.register_model` or `az ml model create --type mlflow_model`
-- [ ] Build `infra/endpoints/scoring/{score.py,conda.yaml}`
+- [ ] Build `infra/endpoints/scoring/{score.py,requirements.txt}`
 - [ ] Toggle `var.enable_inference=true` → `terraform apply` adds `online_endpoint` + `deployment`
 - [ ] `az ml online-endpoint invoke` smoke test + delete/scale-to-0 after
 
@@ -728,22 +686,11 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 | Risk / Decision                                                                                          | Impact | Mitigation / Recommendation                                                                          |
 | -------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| **No Terraform files yet** — first apply creates SA globally-unique name; collision if suffix not random | Medium | Use `random_string` (6 hex) as in §4 table; check `terraform plan` before apply                      |
 | **MLflow version skew** — AML supports `mlflow 2.9–2.13` (check). Local `mlflow` latest may mismatch     | Low    | Pin `mlflow==2.12.0` in `requirements.txt` after checking `az ml workspace show` supported versions  |
 | **T4 spot preemption** during 10-epoch S-BERT fine-tune (≈ 15 min)                                       | Low    | `ModelCheckpoint` every epoch + spot `eviction_policy=Deallocate`; retry job automatically           |
 | **Data size 8k tweets ~ <10MB** but `tiktoken` + `openai` LLM baseline uses Foundry (not AML)            | Low    | Keep LLM baseline local; only `clf/reg` on AML. Mention in docs.                                     |
-| **VRAM >24GB models** if future plan picks large encoders                                                | Medium | T4 (16GB) + gradient accumulation + `precision=16-mixed`; document fallback to A100 spot             |
-| **Public network for learning** vs private                                                               | Low    | Accept `public_network_access_enabled=true` for dev; note VNet injection as Phase 5 hardening        |
-| **State backend chicken-egg** — need SA for TF state before Terraform can create SA                      | Low    | Manual bootstrap step documented in §13 (one `az storage account create` outside Terraform)          |
 | **Endpoint cost surprise**                                                                               | High   | Default `enable_inference=false`; gate deployment behind variable + manual `apply`; set budget alert |
 | **HF cache / rate limits** inside AML job                                                                | Medium | Set `HF_HOME=/tmp`, `TRANSFORMERS_OFFLINE=0`, cache to blob if needed                                |
-
-**Decisions needing user sign-off before Phase 1 apply:**
-
-1. **Region:** `westeurope` (default) vs `swedencentral` (cheaper spot, closer to Saarland). Pick one and lock in `dev.tfvars`.
-2. **MLflow pin:** Keep `mlflow` unpinned or pin to `2.12`/`2.13` (check Azure support matrix).
-3. **Compute:** Start with `Standard_NC4as_T4_v3` spot (cheapest GPU) or CPU-only for first job to validate data pipeline.
-4. **State backend:** Reuse a shared `rg-tfstate-*` or create new one (recommend shared).
 
 ---
 
@@ -831,10 +778,10 @@ output "acr_login_server"      { value = module.acr.login_server }
 
 ### B. File references inspected for this plan
 
-- `compose.yaml:1-11`, `Dockerfile:1-36`, `AGENTS.md:1-4`, `requirements.txt:1-29`, `.gitignore:1-5`
-- `twitter/main.py:1-20`, `twitter/data.py:223-417`, `twitter/models.py:1-258`, `twitter/modules.py:20-441`
-- `configs/defaults.yaml:1-42`, `configs/data.yaml:1-9`, `configs/tasks/*.yaml`, `configs/encoders/*`
-- `docs/improvement-plan.md:1-59`, `data/` listings (no `*.tf` found)
+- `compose.yaml`, `Dockerfile`, `AGENTS.md`, `requirements.txt`, `.gitignore`
+- `twitter/main.py`, `twitter/data.py`, `twitter/models.py`, `twitter/modules.py`
+- `configs/defaults.yaml`, `configs/data.yaml`, `configs/tasks/*.yaml`, `configs/encoders/*`
+- `docs/improvement-plan.md`, `data/` listings (no `*.tf` found)
 
 ### C. Explicit non-goals (this plan does NOT do)
 
@@ -842,18 +789,3 @@ output "acr_login_server"      { value = module.acr.login_server }
 - No production hardening (VNet, Private Link, multi-env prod, SLA endpoint).
 - No migration of `lightning_logs/` history — new runs go to MLflow/AML.
 - No change to `gradio` label game or `topic analysis` — out of scope.
-
-### D. Next action for the user
-
-1. Review this file, pick region + spot vs dedicated.
-2. Approve Phase 1 scaffolding — then run (manually):
-
-   ```bash
-   cd infra/terraform && terraform init -backend-config=backend.hcl && terraform plan -var-file=environments/dev.tfvars
-   ```
-
-3. After plan looks correct (`~13 resources: RG, SA×1, containers×4, LAW, App Insights, KV, ACR, WS, cluster`), approve `apply`.
-
----
-
-*End of plan. No Azure resources were created to produce this document.*

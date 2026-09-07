@@ -1,5 +1,5 @@
 - This environment is a docker container built from `Dockerfile` and `compose.yaml` in this directory. All changes to the environment should be documented in these files for future runs. The `docker` command itself is not available.
-- For azure environment variables use the `ARM_*` pattern.
 - Python packages need to be installed with `--break-system-packages`. Any installed packages should be added to `requirements.txt`.
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - This project does not use jupyter notebooks. Scripts with `click` based CLI are always preferred.
+- This project uses Terraform HCP, so terraform cannot be run locally. Instead, a push to the `dev` branch triggers terrafrom hcp to create a plan, which then has to be approved and applied by a human. There are no guarantees on how fast a human will be available to do this.

@@ -13,6 +13,6 @@ provider "azurerm" {
 }
 
 resource "azurerm_resource_group" "wd" {
-  name     = "mltwittersentiment"
+  name     = "rg-twitter-ml"
   location = "germanywestcentral"
 }

@@ -21,12 +21,6 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r requirements.txt
 
-# Install terraform
-RUN apt-get install -y unzip \
-    && curl -fsSLO https://releases.hashicorp.com/terraform/1.16.0/terraform_1.16.0_linux_amd64.zip \
-    && unzip terraform_1.16.0_linux_amd64.zip \
-    && mv terraform /usr/bin
-
 # Install agent vault
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://get.agent-vault.dev | sh
 
