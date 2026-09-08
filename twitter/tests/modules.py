@@ -12,7 +12,7 @@ data_module = data.TwitterDataModule(
     features="contrast",
     labels="clf",
     encoder_name=model_name,
-    batch_size=batch_size
+    batch_size=batch_size,
 )
 
 # auto-select accelerator (gpu if available, else cpu)

@@ -15,12 +15,16 @@ class UtilTests(unittest.TestCase):
         self.loss_func_no_reduce = SCLoss(reduction="none")
 
     def test_loss_value_with_labels(self):
-        sqrt2 = np.sqrt(2.)
-        sqrt6 = np.sqrt(6.)
-        features = torch.tensor([[0, 0, 1],
-                                 [sqrt6 / 3., -sqrt2 / 3., -1. / 3],
-                                 [0, (2. * sqrt2) / 3., -1 / 3.],
-                                 [-sqrt6 / 3., -sqrt2 / 3., -1. / 3]])
+        sqrt2 = np.sqrt(2.0)
+        sqrt6 = np.sqrt(6.0)
+        features = torch.tensor(
+            [
+                [0, 0, 1],
+                [sqrt6 / 3.0, -sqrt2 / 3.0, -1.0 / 3],
+                [0, (2.0 * sqrt2) / 3.0, -1 / 3.0],
+                [-sqrt6 / 3.0, -sqrt2 / 3.0, -1.0 / 3],
+            ]
+        )
         labels = torch.eye(2, dtype=torch.int32)
         labels = torch.cat([labels, labels], dim=0)
         loss = self.loss_func(features, labels=labels)
@@ -29,12 +33,10 @@ class UtilTests(unittest.TestCase):
         self.assertAlmostEqual(np.mean(loss.numpy()), expected_loss, places=6)
 
     def test_loss_value_with_labels_and_positives(self):
-        features = torch.tensor([[0, 0, 1],
-                                 [0, 1, 0],
-                                 [1, 0, 0],
-                                 [0, 0, 1],
-                                 [0, 1, 0],
-                                 [1, 0, 0]], dtype=torch.float)
+        features = torch.tensor(
+            [[0, 0, 1], [0, 1, 0], [1, 0, 0], [0, 0, 1], [0, 1, 0], [1, 0, 0]],
+            dtype=torch.float,
+        )
         labels = torch.eye(3, dtype=torch.int32)
         labels[1] = labels[0]
         labels = torch.cat([labels, labels], dim=0)
@@ -52,12 +54,16 @@ class UtilTests(unittest.TestCase):
         self.assertAlmostEqual(loss[2], expected_loss[2], places=6)
 
     def testLossValueWithTemp(self):
-        sqrt2 = np.sqrt(2.)
-        sqrt6 = np.sqrt(6.)
-        features = torch.tensor([[0, 0, 1],
-                                 [sqrt6 / 3., -sqrt2 / 3., -1. / 3],
-                                 [0, (2. * sqrt2) / 3., -1 / 3.],
-                                 [-sqrt6 / 3., -sqrt2 / 3., -1. / 3]])
+        sqrt2 = np.sqrt(2.0)
+        sqrt6 = np.sqrt(6.0)
+        features = torch.tensor(
+            [
+                [0, 0, 1],
+                [sqrt6 / 3.0, -sqrt2 / 3.0, -1.0 / 3],
+                [0, (2.0 * sqrt2) / 3.0, -1 / 3.0],
+                [-sqrt6 / 3.0, -sqrt2 / 3.0, -1.0 / 3],
+            ]
+        )
         labels = torch.eye(2, dtype=torch.int32)
         labels = torch.cat([labels, labels], dim=0)
         loss = self.loss_func_temp(features, labels)
@@ -66,5 +72,5 @@ class UtilTests(unittest.TestCase):
         self.assertAlmostEqual(np.mean(loss.numpy()), expected_loss, places=5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

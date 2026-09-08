@@ -9,7 +9,6 @@ from twitter.data import TwitterDataModule, _TwitterBaseDataset
 
 
 class TestBaseDataset(unittest.TestCase):
-
     def setUp(self):
         self.train_dataset = _TwitterBaseDataset(root_dir="data/splits", split="train")
         self.dev_dataset = _TwitterBaseDataset(root_dir="data/splits", split="dev")
@@ -29,25 +28,30 @@ class TestBaseDataset(unittest.TestCase):
 
     def test_items(self):
         x, y = self.train_dataset[0]
-        self.assertEqual(x['text'], 'Proud to work with @GavinNewsom &amp; partners to help bridge the digital divide in our home state. We’re providing 4,000 Chromebooks to California students in greatest need &amp; free wifi to 100,000 rural households during the #COVID19 crisis to make distance learning more accessible.')
-        self.assertEqual(type(x['type']), np.int8)
-        self.assertEqual(x['author_id'], 2)
-        self.assertEqual(x['possibly_sensitive'], 0)
-        self.assertEqual(x['retweet_count'], 584)
-        self.assertEqual(x['quote_count'], 85)
-        self.assertEqual(x['reply_count'], 229)
-        self.assertEqual(x['like_count'], 4649)
-        self.assertEqual(x['followers_count'], 5169451)
-        self.assertEqual(x['following_count'], 140)
-        self.assertEqual(x['tweet_count'], 1833)
-        self.assertEqual(x['listed_count'], 8955)
-        self.assertEqual(x['words'], "['proud', 'work', 'amp', 'partners', 'help', 'bridge', 'digital', 'divide', 'home', 'state', 'providing', 'chromebooks', 'california', 'students', 'greatest', 'need', 'amp', 'free', 'wifi', 'rural', 'households', 'covid', 'crisis', 'make', 'distance', 'learning', 'accessible']")
-        self.assertEqual(y['score_compound'], 0.8481)
-        self.assertEqual(y['sentiment'], data.LABEL_CODING['positive'])
+        self.assertEqual(
+            x["text"],
+            "Proud to work with @GavinNewsom &amp; partners to help bridge the digital divide in our home state. We’re providing 4,000 Chromebooks to California students in greatest need &amp; free wifi to 100,000 rural households during the #COVID19 crisis to make distance learning more accessible.",
+        )
+        self.assertEqual(type(x["type"]), np.int8)
+        self.assertEqual(x["author_id"], 2)
+        self.assertEqual(x["possibly_sensitive"], 0)
+        self.assertEqual(x["retweet_count"], 584)
+        self.assertEqual(x["quote_count"], 85)
+        self.assertEqual(x["reply_count"], 229)
+        self.assertEqual(x["like_count"], 4649)
+        self.assertEqual(x["followers_count"], 5169451)
+        self.assertEqual(x["following_count"], 140)
+        self.assertEqual(x["tweet_count"], 1833)
+        self.assertEqual(x["listed_count"], 8955)
+        self.assertEqual(
+            x["words"],
+            "['proud', 'work', 'amp', 'partners', 'help', 'bridge', 'digital', 'divide', 'home', 'state', 'providing', 'chromebooks', 'california', 'students', 'greatest', 'need', 'amp', 'free', 'wifi', 'rural', 'households', 'covid', 'crisis', 'make', 'distance', 'learning', 'accessible']",
+        )
+        self.assertEqual(y["score_compound"], 0.8481)
+        self.assertEqual(y["sentiment"], data.LABEL_CODING["positive"])
 
 
 class ModuleTests(unittest.TestCase):
-
     def setUp(self):
         # no eda
         self.data_module = TwitterDataModule(
@@ -55,11 +59,11 @@ class ModuleTests(unittest.TestCase):
             features="contrast",
             labels="clf",
             encoder_name="sentence-transformers/bert-base-nli-mean-tokens",
-            batch_size=32
+            batch_size=32,
         )
-        self.data_module.setup('fit')
-        self.data_module.setup('validate')
-        self.data_module.setup('predict')
+        self.data_module.setup("fit")
+        self.data_module.setup("validate")
+        self.data_module.setup("predict")
 
         # with eda
         self.eda_data_module = TwitterDataModule(
@@ -68,21 +72,33 @@ class ModuleTests(unittest.TestCase):
             labels="clf",
             encoder_name="sentence-transformers/bert-base-nli-mean-tokens",
             batch_size=32,
-            eda=True
+            eda=True,
         )
-        self.eda_data_module.setup('fit')
-        self.eda_data_module.setup('validate')
-        self.eda_data_module.setup('predict')
+        self.eda_data_module.setup("fit")
+        self.eda_data_module.setup("validate")
+        self.eda_data_module.setup("predict")
 
     def contrast_batch_shared(self, batch, eda=False):
-        self.assertEqual(batch['input_ids'].shape[0], 64)
+        self.assertEqual(batch["input_ids"].shape[0], 64)
         self.assertEqual(batch["labels"].shape, torch.Size([64]))
         if not eda:
-            self.assertTrue((batch['input_ids'][:32] == batch['input_ids'][32:]).all().item())
-            self.assertTrue((batch['attention_mask'][:32] == batch['attention_mask'][32:]).all().item())
+            self.assertTrue(
+                (batch["input_ids"][:32] == batch["input_ids"][32:]).all().item()
+            )
+            self.assertTrue(
+                (batch["attention_mask"][:32] == batch["attention_mask"][32:])
+                .all()
+                .item()
+            )
         else:
-            self.assertFalse((batch['input_ids'][:32] == batch['input_ids'][32:]).all().item())
-            self.assertFalse((batch['attention_mask'][:32] == batch['attention_mask'][32:]).all().item())
+            self.assertFalse(
+                (batch["input_ids"][:32] == batch["input_ids"][32:]).all().item()
+            )
+            self.assertFalse(
+                (batch["attention_mask"][:32] == batch["attention_mask"][32:])
+                .all()
+                .item()
+            )
 
     def test_contrast_batch_train(self):
         # no eda
@@ -107,9 +123,9 @@ class ModuleTests(unittest.TestCase):
         predict_loader_1, predict_loader_2 = self.data_module.predict_dataloader()
         batch_1 = next(iter(predict_loader_1))
         batch_2 = next(iter(predict_loader_2))
-        self.assertEqual(batch_1['input_ids'].shape[0], 32)
-        self.assertEqual(batch_2['input_ids'].shape[0], 32)
+        self.assertEqual(batch_1["input_ids"].shape[0], 32)
+        self.assertEqual(batch_2["input_ids"].shape[0], 32)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,7 @@ from twitter import util
 #                              #
 ################################
 
+
 class TransformerEncoder(nn.Module):
     """Loads a huggingface transformer model and produces tweet embeddings.
 
@@ -36,16 +37,20 @@ class TransformerEncoder(nn.Module):
     - starting with a frozen encoder and unfreezing layers throughout training
     """
 
-    def __init__(self,
-                 name: str,
-                 pooling: Literal["cls", "mean", "last"] = "cls",
-                 freeze: bool = False,
-                 reset_last: int = None):
+    def __init__(
+        self,
+        name: str,
+        pooling: Literal["cls", "mean", "last"] = "cls",
+        freeze: bool = False,
+        reset_last: int = None,
+    ):
         super().__init__()
 
         self.config = AutoConfig.from_pretrained(name)
         if ("roberta" in name) or ("sentence-transformers" in name):
-            self.encoder = AutoModel.from_pretrained(name, add_pooling_layer=False, config=self.config)  # use cls token as embedding so don't pool!!
+            self.encoder = AutoModel.from_pretrained(
+                name, add_pooling_layer=False, config=self.config
+            )  # use cls token as embedding so don't pool!!
         else:
             self.encoder = AutoModel.from_pretrained(name, config=self.config)
 
@@ -53,7 +58,9 @@ class TransformerEncoder(nn.Module):
 
         # match the pooling method to the model
         if pooling == "cls":
-            self.pooling = lambda x, attention_mask: x[:, 0, :]  # attention_mask for compatibility
+            self.pooling = lambda x, attention_mask: x[
+                :, 0, :
+            ]  # attention_mask for compatibility
         elif pooling == "last":
             self.pooling = lambda x, attention_mask: x[:, -1, :]
         elif pooling == "mean":
@@ -76,7 +83,9 @@ class TransformerEncoder(nn.Module):
                     param.requires_grad = unfreeze
 
     def forward(self, input_ids, attention_mask):
-        token_embeddings = self.encoder(input_ids, attention_mask=attention_mask)[0]  # output last hidden state
+        token_embeddings = self.encoder(input_ids, attention_mask=attention_mask)[
+            0
+        ]  # output last hidden state
         tweet_embeddings = self.pooling(token_embeddings, attention_mask=attention_mask)
         return tweet_embeddings
 
@@ -96,9 +105,11 @@ class TransformerRegressor(nn.Module):
         # store the loss function here to allow a unified training loop
         self.loss_func = nn.MSELoss()
 
-        self.metrics = MetricCollection([
-            MeanSquaredError(squared=False),
-        ])
+        self.metrics = MetricCollection(
+            [
+                MeanSquaredError(squared=False),
+            ]
+        )
 
     def forward(self, input_ids, attention_mask):
         tweet_embeddings = self.encoder(input_ids, attention_mask=attention_mask)
@@ -125,27 +136,18 @@ class TransformerClassifier(nn.Module):
             class_weights = torch.tensor(class_weights)
         self.loss_func = nn.CrossEntropyLoss(weight=class_weights)
 
-        self.metrics = MetricCollection([
-            MulticlassAccuracy(
-                num_classes=self.num_classes,
-                average="micro"
-            ),
-            MulticlassF1Score(
-                num_classes=self.num_classes,
-                average="macro"  # we have a class imbalance, so we use micro averaging
-            ),
-            MulticlassPrecision(
-                num_classes=self.num_classes,
-                average="macro"
-            ),
-            MulticlassRecall(
-                num_classes=self.num_classes,
-                average="macro"
-            ),
-        ])
-        self.val_confmat = MulticlassConfusionMatrix(
-            num_classes=self.num_classes
+        self.metrics = MetricCollection(
+            [
+                MulticlassAccuracy(num_classes=self.num_classes, average="micro"),
+                MulticlassF1Score(
+                    num_classes=self.num_classes,
+                    average="macro",  # we have a class imbalance, so we use micro averaging
+                ),
+                MulticlassPrecision(num_classes=self.num_classes, average="macro"),
+                MulticlassRecall(num_classes=self.num_classes, average="macro"),
+            ]
         )
+        self.val_confmat = MulticlassConfusionMatrix(num_classes=self.num_classes)
 
     def forward(self, input_ids, attention_mask):
         tweet_embeddings = self.encoder(input_ids, attention_mask=attention_mask)
@@ -173,9 +175,7 @@ class Projector(nn.Module):
 class SupervisedContrastiveEncoder(nn.Module):
     """A contrastive encoder that can be used for supervised contrastive learning. It normalizes the embeddings and projects them if a projector is given."""
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 projector: nn.Module = None):
+    def __init__(self, encoder: TransformerEncoder, projector: nn.Module = None):
         super().__init__()
         self.encoder = encoder
         self.tokenizer = self.encoder.tokenizer
@@ -194,7 +194,12 @@ class SupervisedContrastiveEncoder(nn.Module):
 class SupervisedContrastiveClassifier(nn.Module):
     """Adds classification head, classification loss and classification metrics to a supervised contrastive encoder."""
 
-    def __init__(self, encoder: TransformerEncoder, class_weights: list[float] = None, temperature: float = 1.0):
+    def __init__(
+        self,
+        encoder: TransformerEncoder,
+        class_weights: list[float] = None,
+        temperature: float = 1.0,
+    ):
         super().__init__()
         self.encoder = SupervisedContrastiveEncoder(encoder=encoder)
         self.tokenizer = self.encoder.tokenizer
@@ -206,27 +211,15 @@ class SupervisedContrastiveClassifier(nn.Module):
         self.loss_ce = nn.CrossEntropyLoss(weight=class_weights)
 
         # we have a class imbalance, so we use micro averaging
-        self.metrics = MetricCollection([
-            MulticlassAccuracy(
-                num_classes=self.num_classes,
-                average="micro"
-            ),
-            MulticlassF1Score(
-                num_classes=self.num_classes,
-                average="micro"
-            ),
-            MulticlassPrecision(
-                num_classes=self.num_classes,
-                average="micro"
-            ),
-            MulticlassRecall(
-                num_classes=self.num_classes,
-                average="micro"
-            ),
-        ])
-        self.val_confmat = MulticlassConfusionMatrix(
-            num_classes=self.num_classes
+        self.metrics = MetricCollection(
+            [
+                MulticlassAccuracy(num_classes=self.num_classes, average="micro"),
+                MulticlassF1Score(num_classes=self.num_classes, average="micro"),
+                MulticlassPrecision(num_classes=self.num_classes, average="micro"),
+                MulticlassRecall(num_classes=self.num_classes, average="micro"),
+            ]
         )
+        self.val_confmat = MulticlassConfusionMatrix(num_classes=self.num_classes)
 
     def forward(self, input_ids, attention_mask):
         embeddings = self.encoder(input_ids, attention_mask)
@@ -240,19 +233,32 @@ class SupervisedContrastiveClassifier(nn.Module):
 #                              #
 ################################
 
-preprocessing = ColumnTransformer([
-    ("normalize", StandardScaler(), ["retweet_count", "quote_count", "reply_count", "like_count",
-                                     "followers_count", "following_count", "tweet_count", "listed_count"]),
-    ("onehot", OneHotEncoder(), ["type", "author_id", "possibly_sensitive"]),
-    ("passthrough", "passthrough", ["bert_score", "bert_sentiment"])
-], remainder="drop")
+preprocessing = ColumnTransformer(
+    [
+        (
+            "normalize",
+            StandardScaler(),
+            [
+                "retweet_count",
+                "quote_count",
+                "reply_count",
+                "like_count",
+                "followers_count",
+                "following_count",
+                "tweet_count",
+                "listed_count",
+            ],
+        ),
+        ("onehot", OneHotEncoder(), ["type", "author_id", "possibly_sensitive"]),
+        ("passthrough", "passthrough", ["bert_score", "bert_sentiment"]),
+    ],
+    remainder="drop",
+)
 
-svc_pipeline = Pipeline([
-    ("features", preprocessing),
-    ("svm", SVC(C=1, kernel="poly", degree=3))
-])
+svc_pipeline = Pipeline(
+    [("features", preprocessing), ("svm", SVC(C=1, kernel="poly", degree=3))]
+)
 
-svr_pipeline = Pipeline([
-    ("features", preprocessing),
-    ("svm", SVR(C=50, kernel="linear"))
-])
+svr_pipeline = Pipeline(
+    [("features", preprocessing), ("svm", SVR(C=50, kernel="linear"))]
+)

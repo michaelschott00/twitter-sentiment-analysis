@@ -27,18 +27,23 @@ class _BaseModule(pl.LightningModule):
     - freezing and unfreezing layers over the course of training
     """
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 task: Literal["reg", "clf"],
-                 checkpoint: str = None,
-                 lr: float | dict[str, float] = 3e-4,
-                 weight_decay: float = 0.01,
-                 freeze_cfg: dict[str, list[int]] = None,
-                 unfreeze_cfg: dict[str, list[int]] = None):
+    def __init__(
+        self,
+        encoder: TransformerEncoder,
+        task: Literal["reg", "clf"],
+        checkpoint: str = None,
+        lr: float | dict[str, float] = 3e-4,
+        weight_decay: float = 0.01,
+        freeze_cfg: dict[str, list[int]] = None,
+        unfreeze_cfg: dict[str, list[int]] = None,
+    ):
         super().__init__()
 
         if checkpoint:
-            state_dict = torch.load(checkpoint, map_location="cpu" if not torch.cuda.is_available() else "cuda")
+            state_dict = torch.load(
+                checkpoint,
+                map_location="cpu" if not torch.cuda.is_available() else "cuda",
+            )
             state_dict_fixed = dict()
             for key, val in state_dict["state_dict"].items():
                 state_dict_fixed[key.replace("encoder.encoder.", "")] = val
@@ -54,7 +59,12 @@ class _BaseModule(pl.LightningModule):
         reviews = input_ids[high_confidence_errors].cpu()
         labels = labels[high_confidence_errors].cpu()
         preds = probs.argmax(dim=1)[high_confidence_errors].cpu()
-        self.high_confidence_errors.extend([(review, label, pred) for review, label, pred in zip(reviews, labels, preds)])
+        self.high_confidence_errors.extend(
+            [
+                (review, label, pred)
+                for review, label, pred in zip(reviews, labels, preds)
+            ]
+        )
 
     def on_train_batch_start(self, batch, batch_idx):
         # Log some texts from the first input batch
@@ -76,7 +86,11 @@ class _BaseModule(pl.LightningModule):
             self.log_batch(batch, 5, "validation")
 
     def log_batch(self, batch, n, stage: str):
-        if self.logger is None or not hasattr(self.logger, "experiment") or self.logger.experiment is None:
+        if (
+            self.logger is None
+            or not hasattr(self.logger, "experiment")
+            or self.logger.experiment is None
+        ):
             return
         tokenizer = getattr(self, "encoder", None)
         if tokenizer is not None:
@@ -102,15 +116,25 @@ class _BaseModule(pl.LightningModule):
             self.logger.experiment.add_text(f"Input/{stage}", text, i)
 
     def log_high_confidence_errors(self):
-        if self.logger is None or not hasattr(self.logger, "experiment") or self.logger.experiment is None:
+        if (
+            self.logger is None
+            or not hasattr(self.logger, "experiment")
+            or self.logger.experiment is None
+        ):
             return
         for i, (review, label, pred) in enumerate(self.high_confidence_errors):
             text = self.encoder.tokenizer.decode(review)
             text += f"\n\nLabel: {label}\nPrediction: {pred}"
-            self.logger.experiment.add_text("High Confidence Errors/validation", text, i)
+            self.logger.experiment.add_text(
+                "High Confidence Errors/validation", text, i
+            )
 
     def log_confusion_matrix(self, confmat):
-        if self.logger is None or not hasattr(self.logger, "experiment") or self.logger.experiment is None:
+        if (
+            self.logger is None
+            or not hasattr(self.logger, "experiment")
+            or self.logger.experiment is None
+        ):
             return
         fig = plt.figure()
         disp = ConfusionMatrixDisplay(confmat.compute().cpu().numpy())
@@ -127,22 +151,26 @@ class _BaseModule(pl.LightningModule):
 class SingleTaskModule(_BaseModule):
     """Module for managing the training and validation for single task models (regression or classification)."""
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 task: Literal["reg", "clf"],
-                 checkpoint: str = None,
-                 lr: float | dict[str, float] = 3e-4,
-                 weight_decay: float = 0.01,
-                 freeze_cfg: dict[str, list[int]] = None,
-                 unfreeze_cfg: dict[str, list[int]] = None,
-                 class_weights: list[float] = None):
-        super().__init__(encoder=encoder,
-                         checkpoint=checkpoint,
-                         lr=lr,
-                         task=task,
-                         weight_decay=weight_decay,
-                         unfreeze_cfg=unfreeze_cfg,
-                         freeze_cfg=freeze_cfg)
+    def __init__(
+        self,
+        encoder: TransformerEncoder,
+        task: Literal["reg", "clf"],
+        checkpoint: str = None,
+        lr: float | dict[str, float] = 3e-4,
+        weight_decay: float = 0.01,
+        freeze_cfg: dict[str, list[int]] = None,
+        unfreeze_cfg: dict[str, list[int]] = None,
+        class_weights: list[float] = None,
+    ):
+        super().__init__(
+            encoder=encoder,
+            checkpoint=checkpoint,
+            lr=lr,
+            task=task,
+            weight_decay=weight_decay,
+            unfreeze_cfg=unfreeze_cfg,
+            freeze_cfg=freeze_cfg,
+        )
 
         self.save_hyperparameters(ignore="encoder")
 
@@ -171,9 +199,9 @@ class SingleTaskModule(_BaseModule):
         self.model.metrics.update(logits, batch["labels"])
         if self.hparams.task == "clf":
             self.model.val_confmat.update(logits, batch["labels"])
-            self.update_high_confidence_errors(batch["input_ids"],
-                                               logits,
-                                               batch["labels"])
+            self.update_high_confidence_errors(
+                batch["input_ids"], logits, batch["labels"]
+            )
 
         return {"loss": loss, "logits": logits, "labels": batch["labels"]}
 
@@ -187,7 +215,10 @@ class SingleTaskModule(_BaseModule):
     def configure_optimizers(self):
         if isinstance(self.hparams.lr, dict):
             parameters = [
-                {"params": self.model.encoder.parameters(), "lr": self.hparams.lr["encoder"]},
+                {
+                    "params": self.model.encoder.parameters(),
+                    "lr": self.hparams.lr["encoder"],
+                },
                 {"params": self.model.head.parameters(), "lr": self.hparams.lr["head"]},
             ]
         else:
@@ -198,24 +229,28 @@ class SingleTaskModule(_BaseModule):
 class MultiTaskModule(_BaseModule):
     """Module managing training and validation for multi task models, where the loss is a weighted sum of the regression- and classification loss."""
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 task: Literal["reg", "clf"],
-                 checkpoint: str = None,
-                 lr: float | dict[str, float] = 3e-4,
-                 weight_decay: float = 0.01,
-                 freeze_cfg: dict[str, list[int]] = None,
-                 unfreeze_cfg: dict[str, list[int]] = None,
-                 freeze: bool = False,
-                 loss_weight: float = 1.0,
-                 class_weights: list[float] = None):
-        super().__init__(encoder=encoder,
-                         checkpoint=checkpoint,
-                         task=task,
-                         lr=lr,
-                         weight_decay=weight_decay,
-                         freeze_cfg=freeze_cfg,
-                         unfreeze_cfg=unfreeze_cfg)
+    def __init__(
+        self,
+        encoder: TransformerEncoder,
+        task: Literal["reg", "clf"],
+        checkpoint: str = None,
+        lr: float | dict[str, float] = 3e-4,
+        weight_decay: float = 0.01,
+        freeze_cfg: dict[str, list[int]] = None,
+        unfreeze_cfg: dict[str, list[int]] = None,
+        freeze: bool = False,
+        loss_weight: float = 1.0,
+        class_weights: list[float] = None,
+    ):
+        super().__init__(
+            encoder=encoder,
+            checkpoint=checkpoint,
+            task=task,
+            lr=lr,
+            weight_decay=weight_decay,
+            freeze_cfg=freeze_cfg,
+            unfreeze_cfg=unfreeze_cfg,
+        )
 
         self.save_hyperparameters(ignore="encoder")
         self.reg = TransformerRegressor(encoder)
@@ -233,19 +268,26 @@ class MultiTaskModule(_BaseModule):
     def loss_func(self, reg_logits, clf_logits, reg_labels, clf_labels):
         reg_loss = self.reg.loss_func(reg_logits, reg_labels)
         clf_loss = self.clf.loss_func(clf_logits, clf_labels)
-        loss = self.hparams.loss_weight * reg_loss + (1 - self.hparams.loss_weight) * clf_loss
+        loss = (
+            self.hparams.loss_weight * reg_loss
+            + (1 - self.hparams.loss_weight) * clf_loss
+        )
         return reg_loss, clf_loss, loss
 
     def training_step(self, batch, batch_idx):
         reg_labels, clf_labels = torch.split(batch["labels"], 1, dim=1)
 
-        clf_labels = clf_labels.squeeze(1).long()  # CrossEntropyLoss expects long labels but combining the labels into one tensor converts both to float
+        clf_labels = clf_labels.squeeze(
+            1
+        ).long()  # CrossEntropyLoss expects long labels but combining the labels into one tensor converts both to float
         reg_labels = reg_labels.squeeze(1)
 
         reg_logits = self.reg(batch["input_ids"], batch["attention_mask"])
         clf_logits = self.clf(batch["input_ids"], batch["attention_mask"])
 
-        reg_loss, clf_loss, loss = self.loss_func(reg_logits, clf_logits, reg_labels, clf_labels)
+        reg_loss, clf_loss, loss = self.loss_func(
+            reg_logits, clf_logits, reg_labels, clf_labels
+        )
 
         self.log("loss/regression/train", reg_loss, on_step=True, on_epoch=False)
         self.log("loss/classification/train", clf_loss, on_step=True, on_epoch=False)
@@ -259,13 +301,17 @@ class MultiTaskModule(_BaseModule):
         clf_labels = clf_labels.squeeze(1).long()
         reg_labels = reg_labels.squeeze(1)
 
-        reg_logits = self.reg(batch['input_ids'], batch['attention_mask'])
-        clf_logits = self.clf(batch['input_ids'], batch['attention_mask'])
+        reg_logits = self.reg(batch["input_ids"], batch["attention_mask"])
+        clf_logits = self.clf(batch["input_ids"], batch["attention_mask"])
 
-        reg_loss, clf_loss, loss = self.loss_func(reg_logits, clf_logits, reg_labels, clf_labels)
+        reg_loss, clf_loss, loss = self.loss_func(
+            reg_logits, clf_logits, reg_labels, clf_labels
+        )
 
         self.log("loss/regression/validation", reg_loss, on_step=False, on_epoch=True)
-        self.log("loss/classification/validation", clf_loss, on_step=False, on_epoch=True)
+        self.log(
+            "loss/classification/validation", clf_loss, on_step=False, on_epoch=True
+        )
         self.log("loss/validation", loss, on_step=False, on_epoch=True)
 
         self.reg.metrics.update(reg_logits, reg_labels)
@@ -273,9 +319,9 @@ class MultiTaskModule(_BaseModule):
         self.clf.val_confmat.update(clf_logits.squeeze(), clf_labels)
 
         if self.hparams.task == "clf":
-            self.update_high_confidence_errors(batch["input_ids"],
-                                               clf_logits,
-                                               clf_labels)
+            self.update_high_confidence_errors(
+                batch["input_ids"], clf_logits, clf_labels
+            )
 
         return loss
 
@@ -303,10 +349,9 @@ class MultiTaskModule(_BaseModule):
 class SimCSEModule(pl.LightningModule):
     """This module implements the unsupervised contrastive learning method SimCSE (https://arxiv.org/pdf/2104.08821.pdf)."""
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 lr: float = 3e-5,
-                 weight_decay: float = 0.01):
+    def __init__(
+        self, encoder: TransformerEncoder, lr: float = 3e-5, weight_decay: float = 0.01
+    ):
         super().__init__()
 
         self.save_hyperparameters(ignore="encoder")
@@ -338,23 +383,28 @@ class SimCSEModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
+        return torch.optim.AdamW(
+            self.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
+        )
 
 
 class SupervisedConstrastivePretrainingModule(pl.LightningModule):
     """Tries using the the supervised contrastive learning method: https://arxiv.org/pdf/2004.11362.pdf in an unsupervised way for pre-training."""
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 projector: Projector,
-                 lr: float = 3e-5,
-                 weight_decay: float = 0.01):
+    def __init__(
+        self,
+        encoder: TransformerEncoder,
+        projector: Projector,
+        lr: float = 3e-5,
+        weight_decay: float = 0.01,
+    ):
         super().__init__()
 
         self.save_hyperparameters(ignore="encoder")
         self.encoder = SupervisedContrastiveEncoder(
-            encoder=encoder,
-            projector=projector
+            encoder=encoder, projector=projector
         )
 
     def training_step(self, batch, batch_idx):
@@ -370,35 +420,45 @@ class SupervisedConstrastivePretrainingModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(),
-                                 lr=self.hparams.lr,
-                                 weight_decay=self.hparams.weight_decay)
+        return torch.optim.AdamW(
+            self.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
+        )
 
 
 class SupervisedConstrastiveLearningModule(_BaseModule):
     """This module implements the supervised contrastive learning method: https://arxiv.org/pdf/2004.11362.pdf"""
 
-    def __init__(self,
-                 encoder: TransformerEncoder,
-                 lr: float | dict[str, float] = 3e-4,
-                 weight_decay: float = 0.01,
-                 loss_weight: float = 0.9,
-                 temperature: float = 0.3,
-                 freeze_cfg: dict[str, list[int]] = None,
-                 unfreeze_cfg: dict[str, list[int]] = None,
-                 class_weights: list[float] = None):
-        super().__init__(encoder=encoder,
-                         freeze_cfg=freeze_cfg,
-                         unfreeze_cfg=unfreeze_cfg,
-                         task="clf",
-                         lr=lr,
-                         weight_decay=weight_decay)
+    def __init__(
+        self,
+        encoder: TransformerEncoder,
+        lr: float | dict[str, float] = 3e-4,
+        weight_decay: float = 0.01,
+        loss_weight: float = 0.9,
+        temperature: float = 0.3,
+        freeze_cfg: dict[str, list[int]] = None,
+        unfreeze_cfg: dict[str, list[int]] = None,
+        class_weights: list[float] = None,
+    ):
+        super().__init__(
+            encoder=encoder,
+            freeze_cfg=freeze_cfg,
+            unfreeze_cfg=unfreeze_cfg,
+            task="clf",
+            lr=lr,
+            weight_decay=weight_decay,
+        )
 
         self.save_hyperparameters(ignore="encoder")
-        self.model = SupervisedContrastiveClassifier(encoder=encoder, temperature=temperature, class_weights=class_weights)
+        self.model = SupervisedContrastiveClassifier(
+            encoder=encoder, temperature=temperature, class_weights=class_weights
+        )
 
     def loss_func(self, embeddings, logits, labels):
-        loss_scl = self.hparams.loss_weight * self.model.loss_scl(embeddings, F.one_hot(labels, num_classes=3))
+        loss_scl = self.hparams.loss_weight * self.model.loss_scl(
+            embeddings, F.one_hot(labels, num_classes=3)
+        )
         loss_ce = (1 - self.hparams.loss_weight) * self.model.loss_ce(logits, labels)
         loss = loss_ce + loss_scl
         return loss
@@ -417,9 +477,7 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
 
         self.model.metrics.update(logits, batch["labels"])
         self.model.val_confmat.update(logits, batch["labels"])
-        self.update_high_confidence_errors(batch["input_ids"],
-                                           logits,
-                                           batch["labels"])
+        self.update_high_confidence_errors(batch["input_ids"], logits, batch["labels"])
 
         return loss
 
@@ -433,7 +491,10 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
     def configure_optimizers(self):
         if isinstance(self.hparams.lr, dict):
             parameters = [
-                {"params": self.model.encoder.parameters(), "lr": self.hparams.lr["encoder"]},
+                {
+                    "params": self.model.encoder.parameters(),
+                    "lr": self.hparams.lr["encoder"],
+                },
                 {"params": self.model.head.parameters(), "lr": self.hparams.lr["head"]},
             ]
         else:

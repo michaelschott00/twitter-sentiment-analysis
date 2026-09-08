@@ -8,4 +8,3 @@ model:
         pooling: "cls"
     lr: {"encoder": 3e-5, "head": 3e-4}
     weight_decay: 0.01
-

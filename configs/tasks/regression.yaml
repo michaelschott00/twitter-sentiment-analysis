@@ -17,4 +17,3 @@ trainer:
         save_top_k: 1
         monitor: "MeanSquaredError"
         mode: "min"
-

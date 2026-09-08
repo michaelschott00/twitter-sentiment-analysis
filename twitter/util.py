@@ -16,7 +16,9 @@ from torch import nn
 class SCLoss(nn.Module):
     """Mostly taken from https://github.com/google-research/google-research/blob/master/supcon/losses.py#L240"""
 
-    def __init__(self, temperature: float = 1.0, reduction: Literal["mean", "none"] = "mean"):
+    def __init__(
+        self, temperature: float = 1.0, reduction: Literal["mean", "none"] = "mean"
+    ):
         super().__init__()
         self.temperature = temperature
         self.reduction = reduction
@@ -31,10 +33,16 @@ class SCLoss(nn.Module):
             logits -= torch.max(logits, dim=1, keepdim=True)[0]
         exp_logits = torch.exp(logits)
 
-        positive_mask = label_mask * (~torch.eye(len(labels), dtype=torch.bool, device=z.device))
-        negative_mask = (~positive_mask) * (~torch.eye(len(labels), dtype=torch.bool, device=z.device))
+        positive_mask = label_mask * (
+            ~torch.eye(len(labels), dtype=torch.bool, device=z.device)
+        )
+        negative_mask = (~positive_mask) * (
+            ~torch.eye(len(labels), dtype=torch.bool, device=z.device)
+        )
 
-        denominator = (exp_logits * positive_mask).sum(dim=1, keepdim=True) + (exp_logits * negative_mask).sum(dim=1, keepdim=True)
+        denominator = (exp_logits * positive_mask).sum(dim=1, keepdim=True) + (
+            exp_logits * negative_mask
+        ).sum(dim=1, keepdim=True)
         loss = (logits - torch.log(denominator)) * positive_mask
         loss = loss.sum(dim=1)
         loss = torch.nan_to_num(loss / positive_mask.sum(dim=1))
@@ -43,14 +51,15 @@ class SCLoss(nn.Module):
         if self.reduction == "mean":
             loss = loss.mean(dim=0)
         else:
-            loss = loss[:len(labels) // 2]
+            loss = loss[: len(labels) // 2]
         return loss
 
 
 class MeanPooling(nn.Module):
-
     def forward(self, last_hidden_state, attention_mask):
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
+        input_mask_expanded = (
+            attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
+        )
         sum_embeddings = torch.sum(last_hidden_state * input_mask_expanded, 1)
         sum_mask = input_mask_expanded.sum(1)
         sum_mask = torch.clamp(sum_mask, min=1e-9)
@@ -65,26 +74,53 @@ class SubmissionWriter(BasePredictionWriter):
     def __init__(self):
         super().__init__("epoch")
 
-    def write_on_epoch_end(self, trainer, pl_module: 'LightningModule', predictions: list[Any], batch_indices: list[Any]):
+    def write_on_epoch_end(
+        self,
+        trainer,
+        pl_module: "LightningModule",
+        predictions: list[Any],
+        batch_indices: list[Any],
+    ):
         for dataloader, dl_predictions in zip(trainer.predict_dataloaders, predictions):
             dataset = dataloader.dataset
             if pl_module.hparams.task == "clf":
-                final_predictions = np.array([dataset.INVERSE_LABEL_CODING[label.item()] for label in torch.cat(dl_predictions)])
-                assert isinstance(final_predictions[0], str) or isinstance(final_predictions[0], np.str_), f"Predictions should be strings, but are {type(final_predictions[0])}"
+                final_predictions = np.array(
+                    [
+                        dataset.INVERSE_LABEL_CODING[label.item()]
+                        for label in torch.cat(dl_predictions)
+                    ]
+                )
+                assert isinstance(final_predictions[0], str) or isinstance(
+                    final_predictions[0], np.str_
+                ), (
+                    f"Predictions should be strings, but are {type(final_predictions[0])}"
+                )
             else:
-                final_predictions = np.array([label.item() for label in torch.cat(dl_predictions)])
-            assert final_predictions.shape[0] == 1000, f"Predictions should have 1000 elements, but have {final_predictions.shape[0]}"
-            filename = os.path.join(self.PREDICTION_DIR, f'{self.TEAM_ID}__{dataset.split}__{pl_module.hparams.task}_pred.npy')
+                final_predictions = np.array(
+                    [label.item() for label in torch.cat(dl_predictions)]
+                )
+            assert final_predictions.shape[0] == 1000, (
+                f"Predictions should have 1000 elements, but have {final_predictions.shape[0]}"
+            )
+            filename = os.path.join(
+                self.PREDICTION_DIR,
+                f"{self.TEAM_ID}__{dataset.split}__{pl_module.hparams.task}_pred.npy",
+            )
             os.makedirs(self.PREDICTION_DIR, exist_ok=True)
             np.save(filename, final_predictions)
 
 
 class FeatureWriter(BasePredictionWriter):
-
     def __init__(self):
         super().__init__("epoch")
 
-    def write_on_epoch_end(self, trainer, pl_module: 'LightningModule', predictions: list[Any], batch_indices: list[Any]):
+    def write_on_epoch_end(
+        self,
+        trainer,
+        pl_module: "LightningModule",
+        predictions: list[Any],
+        batch_indices: list[Any],
+    ):
         for dataloader, dl_predictions in zip(trainer.predict_dataloaders, predictions):
             dataset = dataloader.dataset
             csv_name = os.path.join(dataset.root_dir, f"tweets_{dataset.split}")
@@ -108,7 +144,6 @@ tokenizer = TweetTokenizer()
 
 
 class TweetNormalizer(nn.Module):
-
     def __init__(self, lowercase: bool = True, replace_emoticons: bool = False):
         super().__init__()
         self.lowercase = lowercase
@@ -122,7 +157,7 @@ class TweetNormalizer(nn.Module):
         elif emoji.is_emoji(token):
             return emoji.demojize(token)
         elif emoji.purely_emoji(token):
-            return ' '.join([emoji.demojize(c) for c in token])
+            return " ".join([emoji.demojize(c) for c in token])
         elif token in EMOTICONS and self.replace_emoticons:
             return EMOTICONS[token]
         elif token == "&amp;" or token == "&":
@@ -141,20 +176,27 @@ class TweetNormalizer(nn.Module):
 
 
 class WordsToSentence(nn.Module):
-
     def __init__(self):
         super().__init__()
 
     def forward(self, x: str) -> str:
         import ast
+
         return " ".join(ast.literal_eval(x))
 
 
 def first_n_examples(batch, n):
-    input_ids = batch["input_ids"][:min(len(batch["input_ids"]), n)].detach().cpu().clone()
-    attention_mask = batch["attention_mask"][:min(len(batch["attention_mask"]), n)].detach().cpu().clone()
+    input_ids = (
+        batch["input_ids"][: min(len(batch["input_ids"]), n)].detach().cpu().clone()
+    )
+    attention_mask = (
+        batch["attention_mask"][: min(len(batch["attention_mask"]), n)]
+        .detach()
+        .cpu()
+        .clone()
+    )
     X = {"input_ids": input_ids, "attention_mask": attention_mask}
-    y = batch["labels"][:min(len(batch["labels"]), n)].detach().cpu().clone()
+    y = batch["labels"][: min(len(batch["labels"]), n)].detach().cpu().clone()
     return X, y
 
 
@@ -246,7 +288,7 @@ EMOTICONS = {
     ":‑/": "Skeptical, annoyed, undecided, uneasy or hesitant",
     ":/": "Skeptical, annoyed, undecided, uneasy or hesitant",
     ":-[.]": "Skeptical, annoyed, undecided, uneasy or hesitant",
-    '>:[(\\)]': "Skeptical, annoyed, undecided, uneasy or hesitant",
+    ">:[(\\)]": "Skeptical, annoyed, undecided, uneasy or hesitant",
     ">:/": "Skeptical, annoyed, undecided, uneasy or hesitant",
     ":[(\\)]": "Skeptical, annoyed, undecided, uneasy or hesitant",
     "=/": "Skeptical, annoyed, undecided, uneasy or hesitant",
@@ -380,5 +422,5 @@ EMOTICONS = {
     "(o.o)": "Surprised",
     "oO": "Surprised",
     "(*￣m￣)": "Dissatisfied",
-    "(‘A`)": "Snubbed or Deflated"
+    "(‘A`)": "Snubbed or Deflated",
 }

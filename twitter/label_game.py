@@ -10,7 +10,11 @@ CANDIDATE_PATHS = [
     "twitter/data/tweets_train.csv",
 ]
 csv_path = next((p for p in CANDIDATE_PATHS if os.path.exists(p)), CANDIDATE_PATHS[0])
-df = pd.read_csv(csv_path) if os.path.exists(csv_path) else pd.DataFrame({"text": ["No data found"], "sentiment": ["neutral"]})
+df = (
+    pd.read_csv(csv_path)
+    if os.path.exists(csv_path)
+    else pd.DataFrame({"text": ["No data found"], "sentiment": ["neutral"]})
+)
 sample = df.sample(1) if len(df) > 0 else df
 
 # keep mutable state in dict to avoid global rebinding issues
@@ -25,7 +29,9 @@ def update_tweet(correct, total):
         "",
         None,
         total + 1,
-        f"Accuracy: {round((correct / total) * 100, 2)}%" if total > 0 else "Accuracy: 0%",
+        f"Accuracy: {round((correct / total) * 100, 2)}%"
+        if total > 0
+        else "Accuracy: 0%",
     )
 
 
@@ -43,8 +49,15 @@ def check_answer(inp, exp, correct):
 
 with gr.Blocks() as demo:
     # interface
-    tweet = gr.Textbox(value=_state["sample"]["text"].values[0] if len(df) > 0 else "", label="Tweet")
-    inp = gr.CheckboxGroup(choices=list(df["sentiment"].unique()) if "sentiment" in df.columns else ["positive", "neutral", "negative"], label="Sentiment:")
+    tweet = gr.Textbox(
+        value=_state["sample"]["text"].values[0] if len(df) > 0 else "", label="Tweet"
+    )
+    inp = gr.CheckboxGroup(
+        choices=list(df["sentiment"].unique())
+        if "sentiment" in df.columns
+        else ["positive", "neutral", "negative"],
+        label="Sentiment:",
+    )
     out = gr.Textbox(label="Result:", interactive=False)
     exp = gr.Textbox(label="Expected:", interactive=False)
     next = gr.Button(value="Next")
@@ -54,7 +67,11 @@ with gr.Blocks() as demo:
 
     # callbacks
     inp.change(check_answer, inputs=[inp, exp, correct], outputs=[out, exp, correct])
-    next.click(update_tweet, inputs=[correct, total], outputs=[tweet, exp, inp, total, accuracy])
+    next.click(
+        update_tweet,
+        inputs=[correct, total],
+        outputs=[tweet, exp, inp, total, accuracy],
+    )
 
 if __name__ == "__main__":
     demo.launch()
