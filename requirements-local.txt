@@ -1,5 +1,6 @@
 ruff
 pytest
+pre-commit
 basedpyright
 azure-cli
 --extra-index-url https://download.pytorch.org/whl/cpu
