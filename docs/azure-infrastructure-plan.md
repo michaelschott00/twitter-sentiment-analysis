@@ -10,19 +10,18 @@ The project is originally a ML competition codebase (Twitter sentiment classific
 
 **Hard requirements:**
 
-| ID | Requirement                   | Success Criteria                                                                                                                                                                     |
+| ID | Requirement                   | Success Criteria                                                                                                                                                 |
 | -- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1 | Store dataset in Azure        | Raw + splits in versioned Azure Storage, registered as Azure ML Data Assets, reproducible `TwitterDataModule(root_dir=...)` without local `data/`                                    |
-| R2 | Train & store models on Azure | `python -m twitter.main` equivalent runs as AML Command Job on Azure ML compute, checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud                            |
-| R3 | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). integrate `lightning.pytorch.loggers.MLFlowLogger`                                               |
-| R4 | Inference endpoint (explore)  | Deploy one registered model to a Managed Online Endpoint (non-prod, 0/1 instance, key auth) with `score.py` that wraps `AutoTokenizer` + `TransformerClassifier`                     |
+| R1 | Store dataset in Azure        | Raw + splits in versioned Azure Storage, registered as Azure ML Data Assets, reproducible `TwitterDataModule(root_dir=...)` without local `data/`                |
+| R2 | Train & store models on Azure | `python -m twitter.main` equivalent runs as AML Command Job on Azure ML compute, checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud    |
+| R3 | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). integrate `lightning.pytorch.loggers.MLFlowLogger`                           |
+| R4 | Inference endpoint (explore)  | Deploy one registered model to a Managed Online Endpoint (non-prod, 0/1 instance, key auth) with `score.py` that wraps `AutoTokenizer` + `TransformerClassifier` |
 
 **Constraints:**
 
 - Terraform runs via Terraform HCP (triggered on `git push` to `dev`); no local terraform install needed (see `AGENTS.md`).
 - Keep local Docker/Compose DX (`compose.yaml`, `AGENTS.md`). Don’t break `pytest`/`ruff` workflow.
 - Budget: learning project → cheapest viable SKUs, auto-shutdown, spot.
-- VRAM limit from later plan step: `≤24GB VRAM` per model → compute choice must respect it.
 - NAT gateways are expensive → avoid them.
 
 ---
@@ -107,32 +106,32 @@ sequenceDiagram
 
 All resources in **one resource group** for cost visibility + easy teardown (learning project). Region: `West Europe`. Naming: lowercase alphanumeric.
 
-| #  | Terraform Resource Type                                                        | Name pattern                             | Purpose                                                        | SKU / Notes                                                                                                                                                                       |
-| -- | ------------------------------------------------------------------------------ | ------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1  | `azurerm_resource_group`                                                       | `rg-twitter-ml`                          | Container for all resources                                    | Tags: `project=twitter-sentiment`, `env=dev`, `owner=<you>`                                                                                                                       |
-| 2  | `azurerm_storage_account`                                                      | `sttwitterml`                            | Blob for datasets, checkpoints, external augmentations         | `Standard_LRS`, `kind=StorageV2`, `allow_nested_items_to_be_public=false` (no public blob access), `min_tls_version=TLS1_2`, versioning ON, blob soft-delete 7d |
-| 3  | `azurerm_storage_container` (×4)                                               | `raw`, `splits`, `external`, `models`    | Logical separation mirroring local `data/*`                    | `container_access_type=private`                                                                                                                                                   |
-| 4  | `azurerm_storage_management_policy`                                            | —                                        | Lifecycle: transition to Cool after 30d, delete temp after 90d | Saves cost for old logs                                                                                                                                                           |
-| 5  | `azurerm_log_analytics_workspace`                                              | `log-twitter-ml`                         | Backend for App Insights                                       | `PerGB2018`, retention 30d (lowest)                                                                                                                                               |
-| 6  | `azurerm_application_insights`                                                 | `appi-twitter-ml`                        | Required by AML workspace                                      | `application_type=other`, `workspace_id` → LAW                                                                                                                                    |
-| 7  | `azurerm_key_vault`                                                            | `kv-twitter-ml`                          | Secrets (MLflow keys, Storage keys)                            | `sku_name=standard`, `purge_protection_enabled=false` for dev (true in prod)                                                                                                           |
-| 8  | `azurerm_container_registry`                                                   | `crtwitterml`                            | Custom training & inference Docker images                      | `Basic` SKU (≈ $0.17/day), `admin_enabled=true` (the AML workspace association requires the admin account) — store admin credentials in Key Vault |
-| 9  | `azurerm_machine_learning_workspace`                                           | `mlw-twitter-sentiment`                  | Core AML                                                       | `kind=default`, `storage_account_id`, `key_vault_id`, `application_insights_id`, `container_registry_id`, `public_network_access_enabled=true` (simpler for learning; VNet later) |
-| 10 | `azurerm_machine_learning_compute_cluster`                                     | `cluster-gpu-spot` + `cluster-cpu`       | Training                                                       | See §4.1 — spot, 0→1 min nodes, idle 300s                                                                                                                                         |
-| 11 | `azurerm_role_assignment` (×N)                                                 | —                                        | Least-privilege                                                | Workspace MSI → `Storage Blob Data Contributor` on SA; user → `AzureML Data Scientist` on WS                                                                                      |
-| 12 | *(Future — not Terraform)*                                                 | `tw-sentiment`                           | Managed Online Endpoint                                        | `auth_mode=key`, `public_network_access_enabled=true` for demo; created via `az ml online-endpoint create` (§9.1) |
-| 13 | `azurerm_consumption_budget_resource_group`                                   | `budget-twitter-ml`                      | Cost safety net                                                | Alert thresholds at $25 / $50; emails subscription owner                                                                                                                            |
-| 14 | *(Future — not Terraform)*                                                 | `blue`                                   | Deployment for registered model                                | `instance_type=Standard_DS2_v2`, `instance_count=1`; created via `az ml online-deployment create` (§9.1) |
+| #  | Terraform Resource Type                     | Name pattern                          | Purpose                                                        | SKU / Notes                                                                                                                                                                       |
+| -- | ------------------------------------------- | ------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | `azurerm_resource_group`                    | `rg-twitter-ml`                       | Container for all resources                                    | Tags: `project=twitter-sentiment`, `env=dev`, `owner=<you>`                                                                                                                       |
+| 2  | `azurerm_storage_account`                   | `sttwitterml`                         | Blob for datasets, checkpoints, external augmentations         | `Standard_LRS`, `kind=StorageV2`, `allow_nested_items_to_be_public=false` (no public blob access), `min_tls_version=TLS1_2`, versioning ON, blob soft-delete 7d                   |
+| 3  | `azurerm_storage_container` (×4)            | `raw`, `splits`, `external`, `models` | Logical separation mirroring local `data/*`                    | `container_access_type=private`                                                                                                                                                   |
+| 4  | `azurerm_storage_management_policy`         | —                                     | Lifecycle: transition to Cool after 30d, delete temp after 90d | Saves cost for old logs                                                                                                                                                           |
+| 5  | `azurerm_log_analytics_workspace`           | `log-twitter-ml`                      | Backend for App Insights                                       | `PerGB2018`, retention 30d (lowest)                                                                                                                                               |
+| 6  | `azurerm_application_insights`              | `appi-twitter-ml`                     | Required by AML workspace                                      | `application_type=other`, `workspace_id` → LAW                                                                                                                                    |
+| 7  | `azurerm_key_vault`                         | `kv-twitter-ml`                       | Secrets (MLflow keys, Storage keys)                            | `sku_name=standard`, `purge_protection_enabled=false` for dev (true in prod)                                                                                                      |
+| 8  | `azurerm_container_registry`                | `crtwitterml`                         | Custom training & inference Docker images                      | `Basic` SKU (≈ $0.17/day), `admin_enabled=true` (the AML workspace association requires the admin account) — store admin credentials in Key Vault                                 |
+| 9  | `azurerm_machine_learning_workspace`        | `mlw-twitter-sentiment`               | Core AML                                                       | `kind=default`, `storage_account_id`, `key_vault_id`, `application_insights_id`, `container_registry_id`, `public_network_access_enabled=true` (simpler for learning; VNet later) |
+| 10 | `azurerm_machine_learning_compute_cluster`  | `cluster-gpu-spot` + `cluster-cpu`    | Training                                                       | See §3.1 — spot, 0→1 min nodes, idle 300s                                                                                                                                         |
+| 11 | `azurerm_role_assignment` (×N)              | —                                     | Least-privilege                                                | Workspace MSI → `Storage Blob Data Contributor` on SA; user → `AzureML Data Scientist` on WS                                                                                      |
+| 12 | *(Future — not Terraform)*                  | `tw-sentiment`                        | Managed Online Endpoint                                        | `auth_mode=key`, `public_network_access_enabled=true` for demo; created via `az ml online-endpoint create` (§9.1)                                                                 |
+| 13 | `azurerm_consumption_budget_resource_group` | `budget-twitter-ml`                   | Cost safety net                                                | Alert thresholds at $25 / $50; emails subscription owner                                                                                                                          |
+| 14 | *(Future — not Terraform)*                  | `blue`                                | Deployment for registered model                                | `instance_type=Standard_DS2_v2`, `instance_count=1`; created via `az ml online-deployment create` (§9.1)                                                                          |
 
-### 3.1 Compute sizing (maps to ≤24GB VRAM requirement)
+### 3.1 Compute sizing
 
-| Cluster                             | VM Size                                                 | vCPU / RAM / GPU            | VRAM       | When to use                                                                    | Cost hint (W. Europe, spot ~60% off)                    |
-| ----------------------------------- | ------------------------------------------------------- | --------------------------- | ---------- | ------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `cluster-cpu`                       | `Standard_DS3_v2` or `Standard_D4s_v3`                  | 4 / 14-16GB / —             | —          | `lightgbm` TF-IDF baseline, data validation                                    | ~$0.19/h, spot ~ $0.04                                  |
-| `cluster-gpu-spot` (primary)        | `Standard_NC4as_T4_v3`                                  | 4 / 28GB / 1× T4            | 16 GB      | `sentence-bert`, `distilbert`, `twihn` (~110-250M params) fine-tune batch 8-16 | ~$0.53/h, spot ~$0.17                                   |
-| `cluster-gpu-spot-large` (optional) | `Standard_NC6s_v3` (V100) or `Standard_NC24ads_A100_v4` | 6-24 / 112GB / 1× V100/A100 | 16 / 80 GB | Larger `xlm-roberta-large` if beating 0.79 F1                                  | V100 ~$3.06/h, A100 ~$3.67/h — use only for final sweep |
+| Cluster                             | VM Size                 | vCPU / RAM / GPU   | VRAM    | When to use                                                                    |
+| ----------------------------------- | ----------------------- | ------------------ | ------- | ------------------------------------------------------------------------------ |
+| `cluster-cpu`                       | `Standard_D4s_v3`       | 4 / 16GB / —       | —       | `lightgbm` TF-IDF baseline, data validation                                    |
+| `cluster-gpu-spot` (primary)        | `Standard_NC4as_T4_v3`  | 4 / 28GB / 1× T4   | 16 GB   | `sentence-bert`, `distilbert`, `twihn` (~110-250M params) fine-tune batch 8-16 |
+| `cluster-gpu-spot-large` (optional) | `Standard_NC64as_T4_v3` | 64 / 440GB / 4× T4 | 4× 16GB | Larger models, e.g. `xlm-roberta-large`                                        |
 
-*Rule:* Default to T4 cluster with `scale_settings { min_node_count=0, max=4, scale_down_nodes_after_idle_duration=PT5M }`. We skip VNet plumbing, so `node_public_ip_enabled` stays at its default `true`. Compute SKU is controlled by `var.compute_vm_size` and applied through HCP; note that `vm_size`/`vm_priority` are force-new, so changing either destroys and recreates the cluster.
+*Rule:* Default to `scale_settings { min_node_count=0, max=4, scale_down_nodes_after_idle_duration=PT5M }`. We skip VNet plumbing, so `node_public_ip_enabled` stays at its default `true`. Compute SKU is controlled by `var.compute_vm_size` and applied through HCP; note that `vm_size`/`vm_priority` are force-new, so changing either destroys and recreates the cluster.
 
 ---
 
@@ -563,38 +562,11 @@ This is a learning project — every resource is chosen to be as cheap as possib
 
 ---
 
-## 12. CI/CD & Local Dev Workflow
-
-**Local (day-1):**
-
-```bash
-# 0. Auth
-az login
-az account set --subscription <id>
-
-# 1. Deploy infra (via Terraform HCP)
-#    Push to `dev` -> HCP triggers `terraform plan` -> approve -> apply
-cd infra/terraform
-terraform fmt -check && terraform validate
-
-# 2. Upload data (operational step — data lives in Terraform-managed storage)
-azcopy copy data/raw/* blob.core.windows.net/<st>/raw
-# Register data assets in AML
-az ml data create --file infra/data/twitter-splits.yaml
-
-# 3. Train
-export MLFLOW_TRACKING_URI=<from terraform output>
-az ml job create --file infra/jobs/job-clf-sbert.yaml
-
-# 4. Register model & deploy
-mlflow register-model runs:/<run_id>/model twitter-sbert-clf
-# Endpoint is created via `az ml online-endpoint create` / `az ml online-deployment create` (operational, see §9.1)
-```
+## 12. CI/CD Workflow
 
 **CI (Terraform HCP):**
 
-- Push to `dev` triggers Terraform HCP to run `terraform plan`; a human approves and applies.
-- `terraform fmt`/`validate`/`tflint` runs in a pre-commit hook.
+- Push to `dev` triggers Terraform HCP to run `terraform plan`; a human approves and applies (already implemented).
 - AML operational commands (`az ml job`, `az ml data`) run from the Docker dev container (same image as `Dockerfile`).
 
 No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE_SUBSCRIPTION_ID`.
@@ -608,19 +580,17 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 - [ ] Create `infra/terraform/{versions,variables,main,outputs}.tf` + `modules/*` per §5
 - [ ] Add `azurerm_consumption_budget_resource_group` ($25 / $50 alert thresholds)
 - [ ] Add `terraform.tfvars.example`, `environments/dev.tfvars`
-- [ ] Add pre-commit hooks:
-  - `terraform fmt`, `tflint` before every commit
-  - `pytest` before every push
-- [ ] `git push origin-http dev` to trigger `terraform plan`
+- [ ] `git push origin-http dev` to trigger `terraform plan` (human will verify and apply the plan)
 
-**Exit:** `infra/terraform/README.md` explains `plan` vs `apply` + naming.
+**Success:** Human reports no errors and approves moving to phase 2.
 
 ### Phase 2 — Data on Azure
 
-- [ ] `terraform apply -target=module.storage` (or full apply — decision)
-- [ ] `azcopy` to upload `data/raw` + `data/splits` to Terraform-managed containers
-- [ ] Register `twitter-raw:1`, `twitter-splits:1` as AML Data Assets (operational step)
+- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers
+- [ ] Register `twitter-splits:1` as AML Data Asset (operational step)
 - [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally
+
+**Success:** Dataset is uploaded and `TwitterDataModule(root_dir=<azureml mounted>)` validation passes
 
 ### Phase 3 — MLflow + Training on AML
 
@@ -632,21 +602,6 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 - [ ] Repeat for `reg` + `multitask` + `lightgbm` (CPU cluster)
 
 **Success:** MLflow run shows `MulticlassF1Score` and `MeanSquaredError`.
-
-### Phase 4 — Model Registry & Inference (non-prod)
-
-- [ ] `mlflow.register_model` to the MLflow model registry
-- [ ] Build `infra/endpoints/scoring/{score.py,requirements.txt}` + endpoint/deployment YAMLs
-- [ ] Deploy endpoint + blue deployment via `az ml online-endpoint create` / `az ml online-deployment create` (see §9.1)
-- [ ] Smoke test endpoint with `curl` + `mlflow deployments predict`
-
-**Success:** `curl` returns `{"prediction":1,"label":"neutral"}` for sample tweet; cost < $1 for test.
-
-### Phase 5 — Hardening & Cleanup
-
-- [ ] Add `azurerm_consumption_budget`, `azurerm_monitor_diagnostic_setting`
-- [ ] Document teardown: `terraform destroy -var-file=environments/dev.tfvars`
-- [ ] Update `README.md` with Azure Quickstart + `docs/azure-infrastructure-plan.md` link
 
 ---
 
