@@ -1,0 +1,23 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+command: >-
+  python -m twitter.main
+    --config configs/tasks/multitask.yaml
+    --config configs/encoders/sentence_bert_base.yaml
+    data.init_args.root_dir=${{inputs.splits}}
+    trainer.logger.class_path=lightning.pytorch.loggers.MLFlowLogger
+    trainer.logger.init_args.experiment_name=twitter-multitask
+    trainer.logger.init_args.tracking_uri=${{env.MLFLOW_TRACKING_URI}}
+    trainer.max_epochs=10
+code: .
+inputs:
+  splits:
+    type: uri_folder
+    path: azureml:twitter-splits:1
+environment: azureml:twitter-ml-env:1
+compute: azureml:cluster-gpu-spot
+experiment_name: twitter-sentiment
+display_name: sbert-multitask-run
+outputs:
+  model_dir:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/models/sbert-multitask/${{name}}/

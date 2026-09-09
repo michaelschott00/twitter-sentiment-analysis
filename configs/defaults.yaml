@@ -6,7 +6,17 @@ trainer:
   devices: auto
   num_nodes: 1
   precision: 32-true
-  logger: null
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: twitter-sentiment
+      # tracking_uri is intentionally null so the MLflow SDK picks up the
+      # MLFLOW_TRACKING_URI environment variable (local mlruns/ or
+      # azureml://... on AML). Do NOT template ${...} here: with
+      # parser_mode=omegaconf that would be parsed as a config interpolation.
+      tracking_uri: null
+      tags: { model: sbert, task: clf }
+      log_model: true
   callbacks: null
   fast_dev_run: false
   max_epochs: null

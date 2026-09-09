@@ -1,0 +1,4 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+name: tw-sentiment
+description: Non-prod demo endpoint for the twitter-sentiment classifier (see docs/azure-infrastructure-plan.md section 9).
+auth_mode: key

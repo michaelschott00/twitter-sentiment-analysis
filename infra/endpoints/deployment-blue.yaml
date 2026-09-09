@@ -1,0 +1,16 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+name: blue
+endpoint_name: tw-sentiment
+model: azureml:twitter-sbert-clf:2
+code_configuration:
+  code: scoring/
+  scoring_script: score.py
+environment: azureml:twitter-ml-env:1
+environment_variables:
+  # Hugging Face encoder the classifier was fine-tuned from.
+  ENCODER_NAME: sentence-transformers/bert-base-nli-mean-tokens
+instance_type: Standard_DS2_v2
+instance_count: 1
+# Scale-to-zero is not supported for managed online deployments; keep
+# instance_count=1 only while demoing and delete the endpoint right after
+# (see deploy.sh). Idle cost is ~$0.09/h for DS2_v2.

@@ -21,4 +21,4 @@ lightgbm
 imbalanced-learn
 tiktoken
 openai
-mlflow
+mlflow>=2.9,<2.14

@@ -66,6 +66,39 @@ class _BaseModule(pl.LightningModule):
             ]
         )
 
+    def _is_mlflow_logger(self):
+        return self.logger is not None and type(self.logger).__name__ == "MLFlowLogger"
+
+    def _log_text(self, tag, text, step):
+        if (
+            self.logger is None
+            or not hasattr(self.logger, "experiment")
+            or self.logger.experiment is None
+        ):
+            return
+        if self._is_mlflow_logger():
+            # MLFlowLogger has no add_text; log via the mlflow SDK against the
+            # run that Lightning's MLFlowLogger keeps active during fit.
+            import mlflow
+
+            mlflow.log_text(text, f"{tag.replace('/', '_')}/{step}.txt")
+        else:
+            self.logger.experiment.add_text(tag, text, step)
+
+    def _log_figure(self, tag, fig):
+        if (
+            self.logger is None
+            or not hasattr(self.logger, "experiment")
+            or self.logger.experiment is None
+        ):
+            return
+        if self._is_mlflow_logger():
+            import mlflow
+
+            mlflow.log_figure(fig, f"{tag.replace('/', '_')}.png")
+        else:
+            self.logger.experiment.add_figure(tag, fig)
+
     def on_train_batch_start(self, batch, batch_idx):
         # Log some texts from the first input batch
         if self.current_epoch == 0 and batch_idx == 0:
@@ -113,33 +146,19 @@ class _BaseModule(pl.LightningModule):
                 text = tokenizer.decode(ids[i])
             except Exception:
                 text = str(ids[i])
-            self.logger.experiment.add_text(f"Input/{stage}", text, i)
+            self._log_text(f"Input/{stage}", text, i)
 
     def log_high_confidence_errors(self):
-        if (
-            self.logger is None
-            or not hasattr(self.logger, "experiment")
-            or self.logger.experiment is None
-        ):
-            return
         for i, (review, label, pred) in enumerate(self.high_confidence_errors):
             text = self.encoder.tokenizer.decode(review)
             text += f"\n\nLabel: {label}\nPrediction: {pred}"
-            self.logger.experiment.add_text(
-                "High Confidence Errors/validation", text, i
-            )
+            self._log_text("High Confidence Errors/validation", text, i)
 
     def log_confusion_matrix(self, confmat):
-        if (
-            self.logger is None
-            or not hasattr(self.logger, "experiment")
-            or self.logger.experiment is None
-        ):
-            return
         fig = plt.figure()
         disp = ConfusionMatrixDisplay(confmat.compute().cpu().numpy())
         disp.plot(ax=fig.gca())
-        self.logger.experiment.add_figure("Confusion Matrix/validation", fig)
+        self._log_figure("Confusion Matrix/validation", fig)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=None):
         pred = self.forward(batch)

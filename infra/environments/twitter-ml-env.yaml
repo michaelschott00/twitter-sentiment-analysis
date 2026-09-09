@@ -1,0 +1,13 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: twitter-ml-env
+description: Training/inference environment for the twitter-sentiment project (see docs/azure-infrastructure-plan.md section 7.1).
+build:
+  path: .
+  dockerfile: Dockerfile
+inference_config:
+  liveness_route:
+    path: /
+    port: 5001
+  readiness_route:
+    path: /
+    port: 5001
