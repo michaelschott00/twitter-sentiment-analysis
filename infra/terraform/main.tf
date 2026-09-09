@@ -82,7 +82,6 @@ module "ml_compute" {
   location               = module.rg.location
   workspace_id           = module.ml_workspace.id
   workspace_principal_id = module.ml_workspace.principal_id
-  storage_account_id     = module.storage.account_id
   container_registry_id  = module.acr.id
 
   gpu_vm_size = var.compute_vm_size
