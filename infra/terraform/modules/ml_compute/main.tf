@@ -32,14 +32,6 @@ resource "azurerm_machine_learning_compute_cluster" "cpu" {
   tags = merge(var.tags, { purpose = "training-cpu" })
 }
 
-# Workspace system-assigned managed identity -> Storage Blob Data Contributor
-# (needed to read/write datasets + model artifacts).
-resource "azurerm_role_assignment" "ws_msi_storage" {
-  scope                = var.storage_account_id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = var.workspace_principal_id
-}
-
 # Workspace system-assigned managed identity -> AcrPull (pull training/inference images).
 resource "azurerm_role_assignment" "ws_msi_acr" {
   scope                = var.container_registry_id

@@ -11,10 +11,6 @@ variable "workspace_principal_id" {
   type        = string
 }
 
-variable "storage_account_id" {
-  type = string
-}
-
 variable "container_registry_id" {
   type = string
 }
