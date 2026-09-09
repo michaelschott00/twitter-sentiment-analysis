@@ -50,6 +50,10 @@ RUN curl -sSLO https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_
     && unzip terraform_1.16.1_linux_amd64.zip \
     && mv terraform /usr/local/bin
 
+RUN curl -sSLO https://aka.ms/downloadazcopy-v10-linux \
+    && tar -xvf downloadazcopy-v10-linux \
+    && mv azcopy_linux_amd64_*/azcopy /usr/local/bin
+
 # Create unprivileged agent user
 RUN useradd -m -u 1000 agent
 RUN mkdir -p $HERMES_HOME \

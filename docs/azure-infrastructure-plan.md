@@ -143,7 +143,7 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 infra/
 ├── terraform/
 │   ├── README.md                         # how to plan/apply (via Terraform HCP)
-│   ├── versions.tf                       # required_version 1.16.0, azurerm ~>3.100, random
+│   ├── versions.tf                       # required_version 1.16.0, azurerm ~>5.2.0, random
 │   ├── variables.tf                      # env, location, prefix, vm sizes
 │   ├── locals.tf                         # naming, tags, suffix
 │   ├── main.tf                           # root module wiring
@@ -586,7 +586,7 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ### Phase 2 — Data on Azure
 
-- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers
+- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers (service principal with permissions is available in agent vault)
 - [ ] Register `twitter-splits:1` as AML Data Asset (operational step)
 - [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally
 
@@ -596,7 +596,7 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 - [ ] Add `MLFlowLogger` to `configs/defaults.yaml` (or task configs) + conditional `MLFLOW_TRACKING_URI`
 - [ ] Update `twitter/modules.py` to support MLflow figure logging fallback
-- [ ] Create `infra/environments/twitter-ml-env.yaml` + `Dockerfile`
+- [ ] Create `infra/environments/twitter-ml-env.yaml` + `Dockerfile` (don't override current dev environment Dockerfile, create a new one)
 - [ ] `terraform apply` provisions compute cluster; register AML environment (operational step)
 - [ ] Submit `job-clf-sbert.yaml` on `cluster-gpu-spot` (T4 spot), check MLflow UI (`azureml://...`)
 - [ ] Repeat for `reg` + `multitask` + `lightgbm` (CPU cluster)

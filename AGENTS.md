@@ -2,5 +2,7 @@
 - Python packages need to be installed with `--break-system-packages`. Any installed packages should be added to `requirements.txt`.
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - This project does not use jupyter notebooks. Scripts with `click` based CLI are always preferred.
-- This project uses Terraform HCP, so terraform cannot be run locally. Instead, a push to the `dev` branch triggers terrafrom hcp to create a plan, which then has to be approved and applied by a human. There are no guarantees on how fast a human will be available to do this.
+- This project uses Terraform HCP, so terraform cannot be run locally. Instead, a push to the `dev` branch triggers terraform hcp to create a plan, which then has to be approved and applied by a human. It may take a while until a human is available to do this.
 - Git pushes should go to the `dev` branch of the `origin-http` remote.
+- `az login` is available via a service principal by running `az login --service-principal --username __client_id__ --password __client_secret__ --tenant __tenant_id__` (variables with double underscore will be replaced by agent vault)
+- Use username "agent" and mail address "<agent@example.com>" to identify yourself in git commits

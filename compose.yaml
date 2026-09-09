@@ -13,6 +13,14 @@ services:
       - AGENT_VAULT_TOKEN=${AGENT_VAULT_TOKEN}
       - AGENT_VAULT_VAULT=default
       - GH_TOKEN="__github_token__"
+      - AZCOPY_SPA_APPLICATION_ID="__client_id__"
+      - AZCOPY_SPA_CLIENT_SECRET="__client_secret__"
+      - AZCOPY_AUTO_LOGIN_TYPE=SPN
+      - AZCOPY_TENANT_ID="__tenant_id__"
+      - ARM_SUBSCRIPTION_ID="__subscription_id__"
+      - ARM_TENANT_ID="__tenant_id__"
+      - ARM_CLIENT_ID="__client_id__"
+      - ARM_CLIENT_SECRET="__client_secret__"
     # command: sleep infinity
     # entrypoint: ""
 
