@@ -38,12 +38,13 @@ RUN curl -sSLO https://github.com/terraform-linters/tflint/releases/latest/downl
   && unzip tflint_linux_amd64.zip \
   && install -c -v tflint /usr/local/bin/ \
   && mkdir -p $TFLINT_PLUGIN_DIR \
-  && chmod 1777 $TFLINT_PLUGIN_DIR \
-  && tflint --init \
-  && mkdir -p /tmp/tflint-azurerm \
-  && printf 'plugin "azurerm" {\n  enabled = true\n  version = "0.32.0"\n  source  = "github.com/terraform-linters/tflint-ruleset-azurerm"\n}\n' > /tmp/tflint-azurerm/.tflint.hcl \
-  && tflint --chdir=/tmp/tflint-azurerm --init \
-  && rm -rf /tmp/tflint-azurerm
+  && chmod 1777 $TFLINT_PLUGIN_DIR
+# Pre-cache the tflint plugins declared in the repo config (single source of
+# truth: infra/terraform/.tflint.hcl) so later runs work fast/offline.
+# Staged under /tmp since the repo is not COPY'd into the image; removed after.
+COPY infra/terraform/.tflint.hcl /tmp/tflint-plugins/.tflint.hcl
+RUN tflint --chdir=/tmp/tflint-plugins --init \
+  && rm -rf /tmp/tflint-plugins
 
 # Install terraform
 RUN curl -sSLO https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip \
