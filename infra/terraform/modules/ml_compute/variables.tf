@@ -22,7 +22,7 @@ variable "gpu_vm_size" {
 
 variable "cpu_vm_size" {
   type    = string
-  default = "Standard_D4s_v6"
+  default = "Standard_DS3_v2"
 }
 
 variable "vm_priority" {

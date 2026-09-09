@@ -586,7 +586,7 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ### Phase 2 — Data on Azure
 
-- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers (service principal with permissions is available in agent vault)
+- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers (service principal with permissions is available in agent vault, so should just work)
 - [ ] Register `twitter-splits:1` as AML Data Asset (operational step)
 - [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally
 

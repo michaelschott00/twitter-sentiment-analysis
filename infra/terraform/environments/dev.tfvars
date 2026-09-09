@@ -6,6 +6,6 @@ compute_vm_size   = "Standard_NC6"
 compute_min_nodes = 0
 compute_max_nodes = 2
 vm_priority       = "LowPriority"
-cpu_vm_size       = "Standard_D4s_v6"
+cpu_vm_size       = "Standard_DS3_v2"
 budget_amount     = 50
 owner             = "agent"

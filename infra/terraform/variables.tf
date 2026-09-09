@@ -43,7 +43,7 @@ variable "vm_priority" {
 variable "cpu_vm_size" {
   description = "VM size for the CPU training cluster (lightgbm baseline, data validation)."
   type        = string
-  default     = "Standard_D4s_v6"
+  default     = "Standard_DS3_v2"
 }
 
 variable "budget_amount" {
