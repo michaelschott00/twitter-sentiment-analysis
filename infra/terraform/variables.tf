@@ -17,9 +17,9 @@ variable "prefix" {
 }
 
 variable "compute_vm_size" {
-  description = "VM size for the GPU spot training cluster. Changing this destroys and recreates the cluster."
+  description = "VM size for the dedicated CPU training cluster (no low-priority quota, no GPU quota). Changing this destroys and recreates the cluster."
   type        = string
-  default     = "Standard_NC6"
+  default     = "Standard_DS3_v2"
 }
 
 variable "compute_min_nodes" {
@@ -35,15 +35,9 @@ variable "compute_max_nodes" {
 }
 
 variable "vm_priority" {
-  description = "Dedicated vs LowPriority (spot). Spot is 60-70% cheaper; changing this destroys and recreates the cluster."
+  description = "Must stay Dedicated: no low-priority quota available. Changing this destroys and recreates the cluster."
   type        = string
-  default     = "LowPriority"
-}
-
-variable "cpu_vm_size" {
-  description = "VM size for the CPU training cluster (lightgbm baseline, data validation)."
-  type        = string
-  default     = "Standard_DS3_v2"
+  default     = "Dedicated"
 }
 
 variable "budget_amount" {

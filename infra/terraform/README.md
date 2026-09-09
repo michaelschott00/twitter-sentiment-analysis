@@ -29,8 +29,9 @@ infra/terraform/
 ├── terraform.tfvars.example
 ├── environments/dev.tfvars        # committed (negated in .gitignore)
 └── modules/
-    ├── resource_group/  monitoring/  storage/  key_vault/
-    ├── container_registry/  ml_workspace/  ml_compute/
+     ├── resource_group/  monitoring/  storage/  key_vault/
+     ├── container_registry/  ml_workspace/  ml_compute/
+     ├── service_principals/  # runpod-mlflow-sp + agent-upload-sp + roles + KV secrets
 ```
 
 ## After apply

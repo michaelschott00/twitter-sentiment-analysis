@@ -1,7 +1,7 @@
 # Azure ML Infrastructure Plan — Twitter Sentiment Project
 
 > **Date:** 2026-09-06
-> **Revision:** 2026-09-09 — Phase 1 complete. No quota for low-priority CPU VMs (dedicated only) and no quota for GPU VMs at all. GPU training moves to RunPod (or similar); Azure ML workspace + MLflow tracking are kept and accessed from RunPod via a service principal. CPU VMs use `Standard_DS3_v2` (dedicated).
+> **Revision:** 2026-09-09 — Phase 1 complete. No quota for low-priority CPU VMs (dedicated only) and no quota for GPU VMs at all. GPU training moves to RunPod (or similar); Azure ML workspace + MLflow tracking are kept and accessed from RunPod via a service principal. CPU VMs use `Standard_DS3_v2` (dedicated). Endpoint deployment uses `Standard_DS11_v2` (lightweight test SKU). Terraform manages `runpod-mlflow-sp` + `agent-upload-sp` service principals.
 
 ---
 
@@ -136,10 +136,10 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 | 8  | `azurerm_container_registry`                | `crtwitterml`                         | Custom training & inference Docker images                      | `Basic` SKU (≈ $0.17/day), `admin_enabled=true` (the AML workspace association requires the admin account) — store admin credentials in Key Vault                                 |
 | 9  | `azurerm_machine_learning_workspace`        | `mlw-twitter-sentiment`               | Core AML                                                       | `kind=default`, `storage_account_id`, `key_vault_id`, `application_insights_id`, `container_registry_id`, `public_network_access_enabled=true` (simpler for learning; VNet later) |
 | 10 | `azurerm_machine_learning_compute_cluster`  | `cluster-cpu`                             | CPU-only training (dedicated, no GPU quota, no low-priority quota) | `Standard_DS3_v2`, `vm_priority=Dedicated`, 0→max nodes, idle 300s — see §3.1 |
-| 11 | `azurerm_role_assignment` (×N) + `azuread_service_principal` | `runpod-mlflow-sp` + role assignments | Least-privilege incl. RunPod access | Workspace MSI → `Storage Blob Data Contributor` on SA; user → `AzureML Data Scientist` on WS; RunPod SP → `AzureML Data Scientist` on WS + `Storage Blob Data Contributor` on SA (see §10) |
+| 11 | `azuread_application` / `azuread_service_principal` (+ roles + KV secrets) | `runpod-mlflow-sp`, `agent-upload-sp` | Least-privilege external access | RunPod SP → `AzureML Data Scientist` on WS + `Storage Blob Data Contributor` on SA; Agent SP → `Storage Blob Data Contributor` on SA (phase-2 upload); secrets in Key Vault (see §10). Module: `modules/service_principals/` |
 | 12 | *(Future — not Terraform)*                  | `tw-sentiment`                        | Managed Online Endpoint                                        | `auth_mode=key`, `public_network_access_enabled=true` for demo; created via `az ml online-endpoint create` (§9.1)                                                                 |
 | 13 | `azurerm_consumption_budget_resource_group` | `budget-twitter-ml`                   | Cost safety net                                                | Alert thresholds at $25 / $50; emails subscription owner                                                                                                                          |
-| 14 | *(Future — not Terraform)*                  | `blue`                                | Deployment for registered model                                | `instance_type=Standard_DS3_v2`, `instance_count=1`; created via `az ml online-deployment create` (§9.1)                                                                          |
+| 14 | *(Future — not Terraform)*                  | `blue`                                | Deployment for registered model                                | `instance_type=Standard_DS11_v2` (lightweight test SKU), `instance_count=1`; created via `az ml online-deployment create` (§9.1)                                                                          |
 
 ### 3.1 Compute sizing
 
@@ -187,7 +187,11 @@ infra/
 │       │   ├── variables.tf
 │       │   └── outputs.tf
 │       ├── ml_compute/
-│       │   ├── main.tf                   # cluster + role assignments
+│       │   ├── main.tf                   # CPU-only cluster (dedicated DS3_v2) + role assignments
+│       │   ├── variables.tf
+│       │   └── outputs.tf
+│       ├── service_principals/
+│       │   ├── main.tf                   # runpod-mlflow-sp + agent-upload-sp + roles + KV secrets
 │       │   ├── variables.tf
 │       │   └── outputs.tf
 │       └── monitoring/
@@ -568,7 +572,7 @@ Include `requirements.txt` pinning `mlflow`, `transformers`, `torch`, `lightning
 
 - Scale to 0/1 via the deployment YAML (endpoints are managed with `az ml`, see §9.1).
 - Key auth only for demo; rotate via `az ml online-endpoint get-credentials` (see §9.1).
-- Monitor cost: endpoint idle ≈ $0.09/h for DS3_v2-class; tear down via `az ml online-endpoint delete --name tw-sentiment` after demo.
+- Monitor cost: endpoint idle ≈ $0.09/h for DS11_v2-class; tear down via `az ml online-endpoint delete --name tw-sentiment` after demo.
 - Document `curl` + `mlflow deployments predict` both.
 
 ---
@@ -577,21 +581,27 @@ Include `requirements.txt` pinning `mlflow`, `transformers`, `torch`, `lightning
 
 | Area          | Dev Plan                                                                                                                                                                                              |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Auth**      | `az login` (user), managed identity for Azure CPU compute/endpoint; service principal `runpod-mlflow-sp` for RunPod GPU runs (`AZURE_CLIENT_ID/SECRET/TENANT_ID` + `MLFLOW_TRACKING_URI`)             |
-| **RBAC**      | User = `Contributor` on RG + `AzureML Data Scientist` on WS; Workspace MSI = `Storage Blob Data Contributor` on SA, `AcrPull` on ACR; RunPod SP = `AzureML Data Scientist` on WS + `Storage Blob Data Contributor` on SA (least privilege for external training) |
+| **Auth**      | `az login` (user), managed identity for Azure CPU compute/endpoint; service principals `runpod-mlflow-sp` (RunPod GPU runs) and `agent-upload-sp` (agent phase-2 data upload), both Terraform-managed with secrets in Key Vault |
+| **RBAC**      | User = `Contributor` on RG + `AzureML Data Scientist` on WS; Workspace MSI = `Storage Blob Data Contributor` on SA, `AcrPull` on ACR; RunPod SP = `AzureML Data Scientist` on WS + `Storage Blob Data Contributor` on SA; Agent SP = `Storage Blob Data Contributor` on SA only (least privilege for upload, no workspace access) |
 | **Key Vault** | Soft-delete 7d, purge protection OFF (easy cleanup); stores RunPod SP secret                                                                                                                          |
 | **Network**   | `public_network_access_enabled=true` for learning (lets RunPod reach workspace + MLflow without VNet/Private Link)                                                                                    |
 | **Secrets**   | `MLFLOW_TRACKING_URI` output, SA keys not used (identity); SP secret never committed, injected as env var                                                                                             |
 | **Data**      | `.gitignore` keeps `data/` local; blob private                                                                                                                                                        |
 
-**All IAM, role assignments, service principals, and access policies are managed via Terraform** — no ad-hoc `az role assignment create` or `az keyvault set-policy` commands. Role assignments live in the same module as the resource they grant access to (e.g., `modules/ml_compute/main.tf` for workspace MSI roles, `modules/storage/main.tf` for SA roles; RunPod SP + its assignments in a new `modules/runpod_sp/` module). The signed-in user's Contributor role on the RG is assumed pre-existing (created via Azure portal during subscription setup) and not part of the Terraform state.
+**All IAM, role assignments, service principals, and access policies are managed via Terraform** — no ad-hoc `az role assignment create`, `az ad sp create`, or `az keyvault set-policy` commands. Role assignments live in the same module as the resource they grant access to (e.g., `modules/ml_compute/main.tf` for workspace MSI roles, `modules/storage/main.tf` for SA roles; both SPs + their assignments in `modules/service_principals/`). The signed-in user's Contributor role on the RG is assumed pre-existing (created via Azure portal during subscription setup) and not part of the Terraform state.
 
 ### RunPod SP details (Terraform-managed)
 
 - `azuread_application` + `azuread_service_principal` + `azuread_service_principal_password` (or federated credential later) named `runpod-mlflow-sp`.
 - Role assignments: SP → `AzureML Data Scientist` on workspace scope (log experiments, register models); SP → `Storage Blob Data Contributor` on storage account scope (read `splits`, write `models` artifacts via MLflow artifact store).
 - SP client ID / tenant ID as Terraform outputs; secret written to Key Vault (`kv-twitter-ml`, secret `runpod-mlflow-sp-secret`), read at pod start with `az keyvault secret show` (as the developer) and exported as `AZURE_CLIENT_SECRET`.
-- Rotation: regenerate `azuread_service_principal_password` via HCP apply; no code change needed.
+- Rotation: regenerate passwords via HCP apply; no code change needed.
+
+### Agent SP details (Terraform-managed, phase-2 upload)
+
+- `azuread_application` + `azuread_service_principal` + `azuread_service_principal_password` named `agent-upload-sp` (module `modules/service_principals/`).
+- Role assignment: Agent SP → `Storage Blob Data Contributor` on the storage account scope only — enough for `azcopy`/SDK upload of `raw` + `splits` containers, no workspace/MLflow access.
+- Secret persisted as Key Vault secret `agent-upload-sp-secret`; client ID + secret exposed as sensitive Terraform outputs for the initial handoff. Agent authenticates with `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` env vars (service-principal `az login` or SDK `ClientSecretCredential`).
 
 ---
 
@@ -613,7 +623,7 @@ This is a learning project — every resource is chosen to be as cheap as possib
 
 ### Inference endpoint
 
-- Managed online endpoints are created with `az ml online-endpoint/deployment create` (see §9.1); don't leave the endpoint running — an idle DS3_v2-class endpoint adds meaningful cost for no benefit. (`Standard_DS2_v2` in older examples is replaced by `Standard_DS3_v2` to match available CPU quota.)
+- Managed online endpoints are created with `az ml online-endpoint/deployment create` (see §9.1); don't leave the endpoint running — an idle DS11_v2 endpoint still adds cost for no benefit. (`Standard_DS11_v2` is the lightweight-testing SKU; fall back to `Standard_DS3_v2` only if DS11_v2 has no quota in the region.)
 
 ### Safety net
 
@@ -645,7 +655,7 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ### Phase 2 — Data on Azure
 
-- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers (service principal with permissions is available in agent vault, so should just work)
+- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers using the Terraform-managed `agent-upload-sp` service principal (client ID + secret from Terraform outputs / Key Vault `agent-upload-sp-secret`; `Storage Blob Data Contributor` on the storage account — see §10). Authenticate with `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` env vars (service-principal `az login`), no `az ad sp` CLI steps.
 - [ ] Register `twitter-splits:1` as AML Data Asset (operational step)
 - [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally
 
@@ -737,32 +747,49 @@ resource "azurerm_machine_learning_compute_cluster" "cpu" {
 # No GPU cluster — GPU training runs on RunPod (§7.4).
 ```
 
-### `infra/terraform/modules/runpod_sp/main.tf` (new — RunPod service principal)
+### `infra/terraform/modules/service_principals/main.tf` (RunPod + Agent SPs)
 
 ```hcl
-# AzureAD app + SP that RunPod pods use to reach the workspace + MLflow.
+# AzureAD apps + SPs: RunPod pods (workspace + MLflow) and agent (phase-2 upload).
 resource "azuread_application" "runpod" { display_name = "runpod-mlflow-sp" }
 resource "azuread_service_principal" "runpod" { client_id = azuread_application.runpod.client_id }
 resource "azuread_service_principal_password" "runpod" { service_principal_id = azuread_service_principal.runpod.id }
 
-# SP → AzureML Data Scientist on workspace (log to MLflow, register models)
+resource "azuread_application" "agent" { display_name = "agent-upload-sp" }
+resource "azuread_service_principal" "agent" { client_id = azuread_application.agent.client_id }
+resource "azuread_service_principal_password" "agent" { service_principal_id = azuread_service_principal.agent.id }
+
+# RunPod SP → AzureML Data Scientist on workspace (log to MLflow, register models)
 resource "azurerm_role_assignment" "runpod_sp_ml_ds" {
   scope                = var.workspace_id
   role_definition_name = "AzureML Data Scientist"
   principal_id         = azuread_service_principal.runpod.object_id
 }
 
-# SP → Storage Blob Data Contributor (read splits, write model artifacts)
+# RunPod SP → Storage Blob Data Contributor (read splits, write model artifacts)
 resource "azurerm_role_assignment" "runpod_sp_storage" {
   scope                = var.storage_account_id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azuread_service_principal.runpod.object_id
 }
 
-# SP secret → Key Vault (pod injects it as AZURE_CLIENT_SECRET)
+# Agent SP → Storage Blob Data Contributor only (phase-2 data upload)
+resource "azurerm_role_assignment" "agent_sp_storage" {
+  scope                = var.storage_account_id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azuread_service_principal.agent.object_id
+}
+
+# SP secrets → Key Vault (injected as AZURE_CLIENT_SECRET)
 resource "azurerm_key_vault_secret" "runpod_sp" {
   name         = "runpod-mlflow-sp-secret"
   value        = azuread_service_principal_password.runpod.value
+  key_vault_id = var.key_vault_id
+}
+
+resource "azurerm_key_vault_secret" "agent_sp" {
+  name         = "agent-upload-sp-secret"
+  value        = azuread_service_principal_password.agent.value
   key_vault_id = var.key_vault_id
 }
 ```

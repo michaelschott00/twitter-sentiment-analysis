@@ -1,26 +1,12 @@
 data "azurerm_client_config" "current" {}
 
-resource "azurerm_machine_learning_compute_cluster" "gpu" {
-  name                          = "cluster-gpu-spot"
-  location                      = var.location
-  vm_priority                   = var.vm_priority
-  vm_size                       = var.gpu_vm_size
-  machine_learning_workspace_id = var.workspace_id
-
-  scale_settings {
-    min_node_count                       = var.min_nodes
-    max_node_count                       = var.max_nodes
-    scale_down_nodes_after_idle_duration = "PT5M"
-  }
-
-  tags = merge(var.tags, { purpose = "training-gpu" })
-}
-
+# Single dedicated CPU cluster (no GPU quota, no low-priority quota on this
+# subscription). GPU training runs on RunPod (see plan section 7.4).
 resource "azurerm_machine_learning_compute_cluster" "cpu" {
   name                          = "cluster-cpu"
   location                      = var.location
   vm_priority                   = var.vm_priority
-  vm_size                       = var.cpu_vm_size
+  vm_size                       = var.vm_size
   machine_learning_workspace_id = var.workspace_id
 
   scale_settings {

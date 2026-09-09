@@ -15,19 +15,16 @@ variable "container_registry_id" {
   type = string
 }
 
-variable "gpu_vm_size" {
-  type    = string
-  default = "Standard_NC6"
-}
-
-variable "cpu_vm_size" {
-  type    = string
-  default = "Standard_DS3_v2"
+variable "vm_size" {
+  description = "VM size for the dedicated CPU training cluster."
+  type        = string
+  default     = "Standard_DS3_v2"
 }
 
 variable "vm_priority" {
-  type    = string
-  default = "LowPriority"
+  description = "Must stay Dedicated: no low-priority quota available."
+  type        = string
+  default     = "Dedicated"
 }
 
 variable "min_nodes" {

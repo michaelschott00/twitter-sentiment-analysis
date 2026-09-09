@@ -14,3 +14,13 @@ resource "azurerm_key_vault" "this" {
 
   tags = var.tags
 }
+
+# Let the Terraform deployer identity manage secrets (used by the
+# service_principals module to persist SP credentials in this vault).
+resource "azurerm_key_vault_access_policy" "deployer_secrets" {
+  key_vault_id = azurerm_key_vault.this.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = data.azurerm_client_config.current.object_id
+
+  secret_permissions = ["Get", "Set", "List", "Delete"]
+}

@@ -84,12 +84,27 @@ module "ml_compute" {
   workspace_principal_id = module.ml_workspace.principal_id
   container_registry_id  = module.acr.id
 
-  gpu_vm_size = var.compute_vm_size
-  cpu_vm_size = var.cpu_vm_size
+  vm_size     = var.compute_vm_size
   vm_priority = var.vm_priority
   min_nodes   = var.compute_min_nodes
   max_nodes   = var.compute_max_nodes
   tags        = local.tags
+}
+
+# External service principals: RunPod GPU training (MLflow/workspace access)
+# + coding-agent data upload (Blob Storage). All Terraform-managed.
+module "service_principals" {
+  source = "./modules/service_principals"
+
+  workspace_id       = module.ml_workspace.id
+  storage_account_id = module.storage.account_id
+  key_vault_id       = module.kv.id
+
+  depends_on = [
+    module.ml_workspace,
+    module.storage,
+    module.kv,
+  ]
 }
 
 # Action group notifying subscription Owners (used by the budget alert below).
