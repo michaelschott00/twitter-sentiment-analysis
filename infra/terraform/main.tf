@@ -93,8 +93,6 @@ module "ml_compute" {
   tags        = local.tags
 }
 
-data "azurerm_subscription" "current" {}
-
 # Action group notifying subscription Owners (used by the budget alert below).
 resource "azurerm_monitor_action_group" "budget" {
   name                = "ag-twitter-ml-budget"
@@ -103,8 +101,8 @@ resource "azurerm_monitor_action_group" "budget" {
 
   arm_role_receiver {
     name = "owners"
-    # Built-in Owner role definition.
-    role_id                 = "${data.azurerm_subscription.current.id}/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+    # Built-in Owner role definition (role_id expects the bare role definition GUID).
+    role_id                 = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
     use_common_alert_schema = true
   }
 

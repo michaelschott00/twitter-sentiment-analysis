@@ -19,7 +19,7 @@ variable "prefix" {
 variable "compute_vm_size" {
   description = "VM size for the GPU spot training cluster. Changing this destroys and recreates the cluster."
   type        = string
-  default     = "Standard_NC4as_T4_v3"
+  default     = "Standard_NC6"
 }
 
 variable "compute_min_nodes" {
@@ -43,7 +43,7 @@ variable "vm_priority" {
 variable "cpu_vm_size" {
   description = "VM size for the CPU training cluster (lightgbm baseline, data validation)."
   type        = string
-  default     = "Standard_D4s_v3"
+  default     = "Standard_D4s_v6"
 }
 
 variable "budget_amount" {
