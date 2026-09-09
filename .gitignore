@@ -1,5 +1,7 @@
 references/
 data/
+# AML data-asset definitions live under infra/data/ — keep them committed.
+!infra/data/
 lightning_logs/
 
 # Byte-compiled / optimized / DLL files

@@ -93,6 +93,24 @@ module "ml_compute" {
   tags        = local.tags
 }
 
+data "azurerm_subscription" "current" {}
+
+# Action group notifying subscription Owners (used by the budget alert below).
+resource "azurerm_monitor_action_group" "budget" {
+  name                = "ag-twitter-ml-budget"
+  resource_group_name = module.rg.name
+  short_name          = "twmlbudget"
+
+  arm_role_receiver {
+    name = "owners"
+    # Built-in Owner role definition.
+    role_id                 = "${data.azurerm_subscription.current.id}/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+    use_common_alert_schema = true
+  }
+
+  tags = local.tags
+}
+
 # Cost safety net: alert at 50% ($25) and 100% ($50 by default) of the monthly budget.
 resource "azurerm_consumption_budget_resource_group" "twitter_ml" {
   name              = "budget-twitter-ml"
@@ -105,19 +123,17 @@ resource "azurerm_consumption_budget_resource_group" "twitter_ml" {
   }
 
   notification {
-    enabled   = true
-    threshold = 50.0
-    operator  = "GreaterThan"
-
-    contact_emails = []
+    enabled        = true
+    threshold      = 50.0
+    operator       = "GreaterThan"
+    contact_groups = [azurerm_monitor_action_group.budget.id]
   }
 
   notification {
-    enabled   = true
-    threshold = 100.0
-    operator  = "GreaterThan"
-
-    contact_emails = []
+    enabled        = true
+    threshold      = 100.0
+    operator       = "GreaterThan"
+    contact_groups = [azurerm_monitor_action_group.budget.id]
   }
 
   lifecycle {

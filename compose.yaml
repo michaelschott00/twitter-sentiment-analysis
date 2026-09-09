@@ -21,6 +21,7 @@ services:
       - ARM_TENANT_ID="__tenant_id__"
       - ARM_CLIENT_ID="__client_id__"
       - ARM_CLIENT_SECRET="__client_secret__"
+      - NLTK_ALLOW_PROXIED_URLOPEN=1
     # command: sleep infinity
     # entrypoint: ""
 

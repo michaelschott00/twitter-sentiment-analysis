@@ -1,0 +1,5 @@
+$schema: https://azuremlschemas.azureedge.net/latest/data.schema.json
+name: twitter-raw
+description: Raw tweets (mirrors local data/raw/).
+type: uri_folder
+path: azureml://datastores/ds_raw/paths/

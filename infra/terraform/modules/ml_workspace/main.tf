@@ -21,28 +21,28 @@ resource "azurerm_machine_learning_workspace" "this" {
 # requires `Storage Blob Data Contributor` on the storage account
 # (see modules/ml_compute/main.tf).
 resource "azurerm_machine_learning_datastore_blobstorage" "raw" {
-  name                       = "ds-raw"
+  name                       = "ds_raw"
   workspace_id               = azurerm_machine_learning_workspace.this.id
   storage_container_id       = var.raw_container_id
   service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "splits" {
-  name                       = "ds-splits"
+  name                       = "ds_splits"
   workspace_id               = azurerm_machine_learning_workspace.this.id
   storage_container_id       = var.splits_container_id
   service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "external" {
-  name                       = "ds-external"
+  name                       = "ds_external"
   workspace_id               = azurerm_machine_learning_workspace.this.id
   storage_container_id       = var.external_container_id
   service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "models" {
-  name                       = "ds-models"
+  name                       = "ds_models"
   workspace_id               = azurerm_machine_learning_workspace.this.id
   storage_container_id       = var.models_container_id
   service_data_auth_identity = "WorkspaceSystemAssignedIdentity"

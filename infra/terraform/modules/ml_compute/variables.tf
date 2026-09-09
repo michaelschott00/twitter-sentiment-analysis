@@ -21,12 +21,12 @@ variable "container_registry_id" {
 
 variable "gpu_vm_size" {
   type    = string
-  default = "Standard_NC4as_T4_v3"
+  default = "Standard_NC6"
 }
 
 variable "cpu_vm_size" {
   type    = string
-  default = "Standard_D4s_v3"
+  default = "Standard_D4s_v6"
 }
 
 variable "vm_priority" {

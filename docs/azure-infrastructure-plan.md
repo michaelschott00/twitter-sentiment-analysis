@@ -285,14 +285,14 @@ AML workspace auto-creates `workspaceblobstore` pointing at its linked storage. 
 # One datastore per container; the resource is azurerm_machine_learning_datastore_blobstorage.
 # Auth is via the workspace system-assigned managed identity (no storage keys).
 resource "azurerm_machine_learning_datastore_blobstorage" "raw" {
-  name                      = "ds-raw"
+  name                      = "ds_raw"
   workspace_id              = module.ml_workspace.id
   storage_container_id      = azurerm_storage_container.raw.id
   service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "splits" {
-  name                       = "ds-splits"
+  name                       = "ds_splits"
   workspace_id               = module.ml_workspace.id
   storage_container_id       = azurerm_storage_container.splits.id
   service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
