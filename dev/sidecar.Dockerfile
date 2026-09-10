@@ -15,7 +15,8 @@ RUN curl -sSLO https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_
     && mv terraform /usr/local/bin
 
 # Install azure-cli
-RUN pip install --no-cache-dir azure-cli "mcp[cli]"
+RUN pip install --no-cache-dir azure-cli "mcp[cli]" \
+    && az upgrade --yes
 
 # Install azcopy
 RUN curl -sSLO https://aka.ms/downloadazcopy-v10-linux \
@@ -34,6 +35,9 @@ RUN chown -R agent:agent /home/agent
 
 # Run as non-privileged user
 USER agent
+
+# Install the Azure ML extension (as the runtime user, so `az ml` is found)
+RUN az extension add --name ml --yes
 
 # Start mcp server
 ENTRYPOINT ["python", "dev/mcp_server.py"]

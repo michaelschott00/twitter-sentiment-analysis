@@ -46,6 +46,15 @@ RUN curl -sSLO https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_
     && unzip terraform_1.16.1_linux_amd64.zip \
     && mv terraform /usr/local/bin
 
+# Install azure-cli
+RUN pip install --no-cache-dir azure-cli \
+    && az upgrade --yes
+
+# Install azcopy
+RUN curl -sSLO https://aka.ms/downloadazcopy-v10-linux \
+    && tar -xvf downloadazcopy-v10-linux \
+    && mv azcopy_linux_amd64_*/azcopy /usr/local/bin
+
 # Create unprivileged agent user
 RUN useradd -m -u 1000 agent
 RUN mkdir -p $HERMES_HOME \
@@ -58,6 +67,9 @@ USER agent
 
 # Install opencode shell completions
 RUN /home/agent/.opencode/bin/opencode completion >> /home/agent/.bashrc
+
+# Install the Azure ML extension (as the runtime user, so `az ml` is found)
+RUN az extension add --name ml --yes
 
 # Override python entrypoint
 ENTRYPOINT ["/bin/bash"]
