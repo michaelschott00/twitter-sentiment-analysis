@@ -20,7 +20,7 @@ def _format_result(cmd: list[str], result: subprocess.CompletedProcess[str]) -> 
 
 @mcp.tool()
 def git_push() -> str:
-    """Push to origin-ssh dev."""
+    """Regular `git push` will not work because ssh is disabled. Use this tool to push to origin-ssh dev."""
     cmd = ["git", "push", "--quiet", "origin-ssh", "dev"]
     try:
         result = subprocess.run(
@@ -33,7 +33,7 @@ def git_push() -> str:
 
 @mcp.tool()
 def azcopy_upload(source: str, destination: str, flags: list[str] | None = None) -> str:
-    """Upload data using azcopy.
+    """Running `azcopy` directly will not work because it's not installed. Use this tool to upload data using azcopy.
 
     Mirrors `azcopy copy [source] [destination] [flags]`.
     Output verbosity is forced to the minimum (--output-level quiet,
