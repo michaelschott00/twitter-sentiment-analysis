@@ -30,3 +30,5 @@ services:
       - AZCOPY_SPA_APPLICATION_ID=${AZCOPY_SPA_APPLICATION_ID}
       - AZCOPY_SPA_CLIENT_SECRET=${AZCOPY_SPA_CLIENT_SECRET}
       - SSH_AUTH_SOCK=/ssh-agent
+      - AZUREML_WORKSPACE_NAME=mlw-twitter-sentiment
+      - AZUREML_RESOURCE_GROUP=rg-twitter-ml
