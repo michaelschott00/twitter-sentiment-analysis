@@ -24,6 +24,16 @@ RUN curl -sSLO https://aka.ms/downloadazcopy-v10-linux \
 
 # Add non-privileged user
 RUN useradd -m -u 1000 agent
+RUN mkdir -p /home/agent/.ssh
+
+# Add github as known host
+COPY dev/known_hosts /home/agent/.ssh/known_hosts
+
+# Adjust permissions
+RUN chown -R agent:agent /home/agent
+
+# Run as non-privileged user
 USER agent
 
+# Start mcp server
 ENTRYPOINT ["python", "dev/mcp_server.py"]
