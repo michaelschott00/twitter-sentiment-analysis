@@ -5,6 +5,7 @@ services:
       dockerfile: dev/dev.Dockerfile
     volumes:
       - .:/workspace
+      - ~/.cache/pre-commit:/home/agent/.cache/pre-commit
       - ~/.hermes:/home/agent/.hermes
       - ~/.config/opencode:/home/agent/.config/opencode
       - ~/.local/share/opencode:/home/agent/.local/share/opencode
