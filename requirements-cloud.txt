@@ -1,3 +1,0 @@
-torch
-azure-ai-ml
-azureml-mlflow

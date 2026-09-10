@@ -1,6 +1,8 @@
 services:
   dev:
-    build: .
+    build:
+      context: .
+      dockerfile: dev/dev.Dockerfile
     volumes:
       - .:/workspace
       - ~/.hermes:/home/agent/.hermes
@@ -9,29 +11,21 @@ services:
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
     environment:
       - HERMES_HOME=/home/agent/.hermes
-      - AGENT_VAULT_ADDR=http://vault:14321
-      - AGENT_VAULT_TOKEN=${AGENT_VAULT_TOKEN}
-      - AGENT_VAULT_VAULT=default
-      - GH_TOKEN="__github_token__"
-      - ARM_SUBSCRIPTION_ID="__subscription_id__"
-      - ARM_TENANT_ID="__tenant_id__"
-      - AZCOPY_AUTO_LOGIN_TYPE=AZCLI
-      - AZCOPY_TENANT_ID="__tenant_id__"
-      - AZCOPY_SPA_APPLICATION_ID="__agent_client_id__"
-      - AZCOPY_SPA_CLIENT_SECRET="__agent_client_secret__"
-      - NLTK_ALLOW_PROXIED_URLOPEN=1
-    # command: sleep infinity
-    # entrypoint: ""
 
-  vault:
-    image: infisical/agent-vault
-    environment:
-      - AGENT_VAULT_MASTER_PASSWORD=${AGENT_VAULT_MASTER_PASSWORD}
+  sidecar:
+    build:
+      context: .
+      dockerfile: dev/sidecar.Dockerfile
     ports:
-      - "14321:14321"
-      - "14322:14322"
+      - 8000:8000
     volumes:
-      - agent-vault-data:/data
-
-volumes:
-  agent-vault-data:
+      - .:/workspace
+    environment:
+      - ARM_SUBSCRIPTION_ID="${ARM_SUBSCRIPTION_ID}"
+      - ARM_TENANT_ID="${ARM_TENANT_ID}"
+      - AZCOPY_AUTO_LOGIN_TYPE="SPN"
+      - AZCOPY_TENANT_ID="${AZCOPY_TENANT_ID}"
+      - AZCOPY_SPA_APPLICATION_ID="${AZCOPY_SPA_APPLICATION_ID}"
+      - AZCOPY_SPA_CLIENT_SECRET="${AZCOPY_SPA_CLIENT_SECRET}"
+      - GH_TOKEN="${GH_TOKEN}"
+    command: ["sleep", "infinity"]

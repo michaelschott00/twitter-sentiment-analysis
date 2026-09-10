@@ -3,7 +3,9 @@ FROM python:3.12-slim
 WORKDIR /workspace
 
 # Install basic utils
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install hermes
 ENV HERMES_HOME=/home/agent/.hermes
@@ -17,20 +19,12 @@ RUN npx playwright install-deps chromium
 RUN curl -fsSL https://opencode.ai/install | bash
 
 # Install python packages
-COPY requirements-shared.txt .
-COPY requirements-local.txt .
+COPY dev/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements-shared.txt \
-    && pip install --no-cache-dir -r requirements-local.txt \
-    && pip install --no-cache-dir pre-commit
-
-RUN apt-get update && apt-get install -y gh unzip wget gpg
+    pip install --no-cache-dir -r requirements.txt
 
 # Download NLTK data
 RUN python -c "import nltk; nltk.download('stopwords')"
-
-# Install agent vault
-RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://get.agent-vault.dev | sh
 
 # Install tflint
 ENV TFLINT_PLUGIN_DIR=/usr/local/share/tflint/plugins
@@ -39,6 +33,7 @@ RUN curl -sSLO https://github.com/terraform-linters/tflint/releases/latest/downl
   && install -c -v tflint /usr/local/bin/ \
   && mkdir -p $TFLINT_PLUGIN_DIR \
   && chmod 1777 $TFLINT_PLUGIN_DIR
+
 # Pre-cache the tflint plugins declared in the repo config (single source of
 # truth: infra/terraform/.tflint.hcl) so later runs work fast/offline.
 # Staged under /tmp since the repo is not COPY'd into the image; removed after.
@@ -50,10 +45,6 @@ RUN tflint --chdir=/tmp/tflint-plugins --init \
 RUN curl -sSLO https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip \
     && unzip terraform_1.16.1_linux_amd64.zip \
     && mv terraform /usr/local/bin
-
-RUN curl -sSLO https://aka.ms/downloadazcopy-v10-linux \
-    && tar -xvf downloadazcopy-v10-linux \
-    && mv azcopy_linux_amd64_*/azcopy /usr/local/bin
 
 # Create unprivileged agent user
 RUN useradd -m -u 1000 agent
@@ -69,4 +60,4 @@ USER agent
 RUN /home/agent/.opencode/bin/opencode completion >> /home/agent/.bashrc
 
 # Override python entrypoint
-ENTRYPOINT ["agent-vault", "run", "--", "/home/agent/.opencode/bin/opencode"]
+ENTRYPOINT ["/bin/bash"]
