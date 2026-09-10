@@ -24,7 +24,7 @@ except ImportError:
 
 import lightgbm as lgb
 
-from twitter.data import LABEL_CODING
+from twitter.labels import LABEL_CODING
 
 
 def _load_data(train_path: str, dev_path: str):

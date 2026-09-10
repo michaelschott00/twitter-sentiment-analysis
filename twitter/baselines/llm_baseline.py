@@ -29,7 +29,7 @@ try:
 except ImportError:
     _HAS_RMSE = False
 
-from twitter.data import LABEL_CODING
+from twitter.labels import LABEL_CODING
 
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_ENCODING = "o200k_base"

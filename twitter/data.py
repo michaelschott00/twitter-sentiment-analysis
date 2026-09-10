@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from transformers import AutoTokenizer
 
 from twitter.augmentation import EDA
+from twitter.labels import INVERSE_LABEL_CODING, LABEL_CODING
 from twitter.util import TweetNormalizer, WordsToSentence
 
 ################################
@@ -19,9 +20,8 @@ from twitter.util import TweetNormalizer, WordsToSentence
 #                              #
 ################################
 
-# these are required for submitting predictions in the correct format
-LABEL_CODING: dict[str, int] = {"negative": 0, "neutral": 1, "positive": 2}
-INVERSE_LABEL_CODING: dict[int, str] = {v: k for k, v in LABEL_CODING.items()}
+# Re-exported here for backwards compatibility (tests import data.LABEL_CODING).
+__all__ = ["INVERSE_LABEL_CODING", "LABEL_CODING"]
 
 
 ################################
