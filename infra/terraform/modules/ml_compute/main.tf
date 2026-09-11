@@ -9,10 +9,6 @@ resource "azurerm_machine_learning_compute_cluster" "cpu" {
   vm_size                       = var.vm_size
   machine_learning_workspace_id = var.workspace_id
 
-  identity {
-    type = "SystemAssigned"
-  }
-
   scale_settings {
     min_node_count                       = var.min_nodes
     max_node_count                       = var.max_nodes

@@ -17,34 +17,31 @@ resource "azurerm_machine_learning_workspace" "this" {
   tags = var.tags
 }
 
-# One datastore per container. Auth is via the workspace system-assigned
-# managed identity, so no storage keys are needed — but the workspace MSI
-# requires `Storage Blob Data Contributor` on the storage account
-# (see modules/ml_compute/main.tf).
+# One datastore per container. Auth is via storage account access key.
 resource "azurerm_machine_learning_datastore_blobstorage" "raw" {
-  name                       = "ds_raw"
-  workspace_id               = azurerm_machine_learning_workspace.this.id
-  storage_container_id       = var.raw_container_id
-  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
+  name                 = "ds_raw"
+  workspace_id         = azurerm_machine_learning_workspace.this.id
+  storage_container_id = var.raw_container_id
+  account_key          = var.storage_account_primary_access_key
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "splits" {
-  name                       = "ds_splits"
-  workspace_id               = azurerm_machine_learning_workspace.this.id
-  storage_container_id       = var.splits_container_id
-  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
+  name                 = "ds_splits"
+  workspace_id         = azurerm_machine_learning_workspace.this.id
+  storage_container_id = var.splits_container_id
+  account_key          = var.storage_account_primary_access_key
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "external" {
-  name                       = "ds_external"
-  workspace_id               = azurerm_machine_learning_workspace.this.id
-  storage_container_id       = var.external_container_id
-  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
+  name                 = "ds_external"
+  workspace_id         = azurerm_machine_learning_workspace.this.id
+  storage_container_id = var.external_container_id
+  account_key          = var.storage_account_primary_access_key
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "models" {
-  name                       = "ds_models"
-  workspace_id               = azurerm_machine_learning_workspace.this.id
-  storage_container_id       = var.models_container_id
-  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
+  name                 = "ds_models"
+  workspace_id         = azurerm_machine_learning_workspace.this.id
+  storage_container_id = var.models_container_id
+  account_key          = var.storage_account_primary_access_key
 }

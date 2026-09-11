@@ -14,6 +14,12 @@ variable "storage_account_id" {
   type = string
 }
 
+variable "storage_account_primary_access_key" {
+  description = "Primary access key for the ML storage account (used for datastore key-based auth)."
+  type        = string
+  sensitive   = true
+}
+
 variable "key_vault_id" {
   type = string
 }

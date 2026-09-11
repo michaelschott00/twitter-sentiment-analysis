@@ -52,13 +52,14 @@ module "acr" {
 module "ml_workspace" {
   source = "./modules/ml_workspace"
 
-  name                    = local.workspace_name
-  resource_group_name     = module.rg.name
-  location                = module.rg.location
-  storage_account_id      = module.storage.account_id
-  key_vault_id            = module.kv.id
-  application_insights_id = module.monitoring.app_insights_id
-  container_registry_id   = module.acr.id
+  name                               = local.workspace_name
+  resource_group_name                = module.rg.name
+  location                           = module.rg.location
+  storage_account_id                 = module.storage.account_id
+  storage_account_primary_access_key = module.storage.primary_access_key
+  key_vault_id                       = module.kv.id
+  application_insights_id            = module.monitoring.app_insights_id
+  container_registry_id              = module.acr.id
 
   raw_container_id      = module.storage.raw_container_id
   splits_container_id   = module.storage.splits_container_id
