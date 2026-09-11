@@ -6,12 +6,6 @@ output "account_id" {
   value = azurerm_storage_account.ml.id
 }
 
-output "primary_access_key" {
-  description = "Primary access key for the ML storage account (used for datastore key-based auth)."
-  value       = azurerm_storage_account.ml.primary_access_key
-  sensitive   = true
-}
-
 output "raw_container_id" {
   value = azurerm_storage_container.raw.id
 }
