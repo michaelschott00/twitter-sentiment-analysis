@@ -1,4 +1,4 @@
-"""LLM baseline for Twitter sentiment analysis via Microsoft Foundry (Azure OpenAI).
+"""LLM baseline for Twitter sentiment analysis via the regular OpenAI API.
 
 Uses few-shot prompting to obtain both classification (sentiment) and
 regression (valence) in a single prompt. Supports token estimation with
@@ -31,9 +31,8 @@ except ImportError:
 
 from twitter.labels import LABEL_CODING
 
-DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_ENCODING = "o200k_base"
-DEFAULT_API_VERSION = "2024-12-01-preview"
 
 SYSTEM_PROMPT = (
     "You are an expert sentiment analysis model for Twitter data, "
@@ -63,7 +62,7 @@ def get_encoding(encoding_name: str = DEFAULT_ENCODING):
         return tiktoken.get_encoding(encoding_name)
     except Exception:  # noqa: BLE001
         try:
-            return tiktoken.encoding_for_model("gpt-5")
+            return tiktoken.encoding_for_model(DEFAULT_MODEL)
         except Exception:  # noqa: BLE001
             return tiktoken.get_encoding("o200k_base")
 
@@ -184,58 +183,31 @@ def build_messages(
     return messages
 
 
-def get_openai_client():
-    """Create OpenAI / AzureOpenAI client from environment variables.
+def get_openai_client(base_url: str | None = None):
+    """Create a regular OpenAI client from environment variables.
 
     Env vars:
-      - AZURE_OPENAI_ENDPOINT / AZURE_AI_FOUNDRY_ENDPOINT / OPENAI_API_BASE
-      - AZURE_OPENAI_API_KEY / AZURE_OPENAI_KEY / OPENAI_API_KEY
-      - AZURE_OPENAI_API_VERSION (default 2024-12-01-preview)
+      - OPENAI_API_KEY (required)
+      - OPENAI_BASE_URL / OPENAI_API_BASE (optional, overrides ``base_url``;
+        defaults to the official OpenAI API endpoint)
     Returns None if credentials missing.
     """
     if openai is None:
         return None
 
-    endpoint = (
-        os.getenv("AZURE_OPENAI_ENDPOINT")
-        or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
-        or os.getenv("OPENAI_API_BASE")
-        or os.getenv("OPENAI_BASE_URL")
-    )
-    api_key = (
-        os.getenv("AZURE_OPENAI_API_KEY")
-        or os.getenv("AZURE_OPENAI_KEY")
-        or os.getenv("AZURE_AI_FOUNDRY_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-    )
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", DEFAULT_API_VERSION)
+    api_key = os.getenv("OPENAI_API_KEY")
+    base = base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
 
-    if endpoint and api_key:
-        # Detect Azure endpoint vs generic OpenAI-compatible
-        low = endpoint.lower()
-        if "openai.azure.com" in low or "azure" in low:
-            try:
-                return openai.AzureOpenAI(
-                    azure_endpoint=endpoint, api_key=api_key, api_version=api_version
-                )
-            except Exception as e:  # noqa: BLE001
-                click.echo(f"Failed to create AzureOpenAI client: {e}", err=True)
-                return None
-        else:
-            try:
-                return openai.OpenAI(api_key=api_key, base_url=endpoint)
-            except Exception as e:  # noqa: BLE001
-                click.echo(
-                    f"Failed to create OpenAI client with base_url: {e}", err=True
-                )
-                return None
-    elif api_key:
-        try:
-            return openai.OpenAI(api_key=api_key)
-        except Exception as e:  # noqa: BLE001
-            click.echo(f"Failed to create OpenAI client: {e}", err=True)
-            return None
-    return None
+    if not api_key:
+        return None
+    try:
+        kwargs: dict = {"api_key": api_key}
+        if base:
+            kwargs["base_url"] = base
+        return openai.OpenAI(**kwargs)
+    except Exception as e:  # noqa: BLE001
+        click.echo(f"Failed to create OpenAI client: {e}", err=True)
+        return None
 
 
 def parse_model_output(content: str) -> tuple[str, float]:
@@ -289,8 +261,8 @@ def call_llm(client, model: str, messages: list[dict], temperature: float = 0.0)
         "messages": messages,
         "temperature": temperature,
     }
-    # gpt-5.x supports response_format json_object
-    if "gpt-5" in model or "gpt-4" in model:
+    # Most regular OpenAI chat models support json_object response_format
+    if "gpt-4o" in model or "gpt-5" in model or "gpt-4" in model or "gpt-3.5" in model:
         kwargs["response_format"] = {"type": "json_object"}
 
     try:
@@ -312,7 +284,12 @@ def call_llm(client, model: str, messages: list[dict], temperature: float = 0.0)
 @click.option(
     "--train-path", default="data/splits/tweets_train.csv", help="Path to train CSV"
 )
-@click.option("--model", default=DEFAULT_MODEL, help="Model name for Azure OpenAI")
+@click.option("--model", default=DEFAULT_MODEL, help="Model name for OpenAI API")
+@click.option(
+    "--base-url",
+    default=None,
+    help="Optional custom OpenAI base URL (overrides OPENAI_BASE_URL)",
+)
 @click.option(
     "--encoding", default=DEFAULT_ENCODING, help="tiktoken encoding (e.g. o200k_base)"
 )
@@ -351,6 +328,7 @@ def main(
     dev_path,
     train_path,
     model,
+    base_url,
     encoding,
     num_shots,
     limit,
@@ -359,7 +337,7 @@ def main(
     estimate_tokens,
     dry_run,
 ):
-    """LLM baseline: few-shot sentiment + valence via Azure OpenAI on dev set."""
+    """LLM baseline: few-shot sentiment + valence via OpenAI API on dev set."""
     # --estimate-tokens path
     if estimate_tokens:
         estimate_token_counts(dev_path, encoding)
@@ -400,10 +378,10 @@ def main(
     # Dry-run handling
     client = None
     if not dry_run:
-        client = get_openai_client()
+        client = get_openai_client(base_url=base_url)
         if client is None:
             click.echo(
-                "No Azure/OpenAI credentials found (AZURE_OPENAI_ENDPOINT/OPENAI_API_KEY). "
+                "No OpenAI credentials found (OPENAI_API_KEY). "
                 "Switching to dry-run mode (print prompts instead of calling API).",
                 err=True,
             )
@@ -432,9 +410,7 @@ def main(
         click.echo(
             f"\nDry run done. Would evaluate {len(df_dev) if limit is None else min(limit, len(df_dev))} tweets live."
         )
-        click.echo(
-            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY to run live calls."
-        )
+        click.echo("Set OPENAI_API_KEY to run live calls.")
         return
 
     # Live mode
