@@ -3,6 +3,6 @@
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - This project does not use jupyter notebooks. Scripts with `click` based CLI are always preferred.
 - This project uses Terraform HCP, so terraform cannot be run locally. Instead, a push to the `dev` branch triggers terraform hcp to create a plan, which then has to be approved and applied by a human. It may take a while until a human is available to do this.
-- Git pushes should go to the `dev` branch of the `origin-http` remote.
+- Git pushes should go to the `dev` branch of the `origin-ssh` remote.
 - Use username "agent" and mail address "<agent@example.com>" to identify yourself in git commits.
-- The repo mcp server is in active development. If you run into issues with its tools, do not try to work around them. Fix the causes in ./dev/mcp_server.py or tell me what I need to do and then wait for me to rebuild the containers/do what you told me to do.
+- `az`, `azcopy` as well as any `git` command that interacts with github is not available directly. They can only be used through the repo mcp server. Note that this mcp server is in active development. If you run into issues with its tools, do not try to work around them. Fix the causes in ./dev/mcp_server.py or tell me what I need to do and then wait for me to rebuild the containers/do what you told me to do.

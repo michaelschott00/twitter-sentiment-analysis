@@ -148,7 +148,7 @@ def _format_result(cmd: list[str], result: subprocess.CompletedProcess[str]) -> 
 
 @mcp.tool()
 def git_push() -> str:
-    """Regular `git push` will not work because ssh is disabled. Use this tool to push to origin-ssh dev."""
+    """Use this tool to push to origin-ssh dev."""
     cmd = ["git", "push", "--quiet", "origin-ssh", "dev"]
     try:
         result = subprocess.run(
@@ -163,7 +163,7 @@ def git_push() -> str:
 
 @mcp.tool()
 def azcopy_upload(source: str, destination: str, flags: list[str] | None = None) -> str:
-    """Running `azcopy` directly will not work because it's not installed. Use this tool to upload data using azcopy.
+    """Use this tool to upload data using azcopy.
 
     Mirrors `azcopy copy [source] [destination] [flags]`.
     Output verbosity is forced to the minimum (--output-level quiet,
@@ -193,13 +193,6 @@ def azcopy_upload(source: str, destination: str, flags: list[str] | None = None)
 
 
 # --- az ml helpers -------------------------------------------------------
-# Covers the `az ml` subcommands required by docs/azure-infrastructure-plan.md:
-#   environment create (§7.1), data create (§12, Phase 2), job create/show/list
-#   (§12), online-endpoint create/update/delete (§9.1, §9.3), online-deployment
-#   create (§9.1). Credential-bearing commands (`online-endpoint
-#   get-credentials`, `regenerate-keys`) are intentionally NOT exposed, and
-#   output is forced to `--output table --only-show-errors` and truncated so
-#   no credentials leak through verbose JSON output.
 
 _AZ_ML_TIMEOUT = 300
 _AZ_ML_STREAM_TIMEOUT = 180
@@ -307,10 +300,9 @@ def azml_data(
     set_args: list[str] | None = None,
     no_wait: bool = False,
 ) -> str:
-    """Manage Azure ML data assets (`az ml data ...`, plan §5/§12, Phase 2).
+    """Manage Azure ML data assets (`az ml data ...`).
 
-    operation "create" registers a data asset from a YAML spec (e.g.
-    twitter-splits); "show"/"list" inspect assets. `file` must be a
+    operation "create" registers a data asset from a YAML spec; "show"/"list" inspect assets. `file` must be a
     .yaml/.yml path inside /workspace. Output is forced to table format and
     truncated; credential commands are not exposed.
     """
@@ -350,9 +342,9 @@ def azml_environment(
     set_args: list[str] | None = None,
     no_wait: bool = False,
 ) -> str:
-    """Manage Azure ML environments (`az ml environment ...`, plan §7.1).
+    """Manage Azure ML environments (`az ml environment ...`).
 
-    operation "create" registers e.g. twitter-ml-env from a YAML spec;
+    operation "create" registers an environment from a YAML spec;
     "show"/"list" inspect environments. `file` must be a .yaml/.yml path
     inside /workspace. Output is forced to table format and truncated;
     credential commands are not exposed.
@@ -391,7 +383,7 @@ def azml_job(
     set_args: list[str] | None = None,
     stream_logs: bool = False,
 ) -> str:
-    """Manage Azure ML jobs (`az ml job ...`, plan §7.2, §12).
+    """Manage Azure ML jobs (`az ml job ...`).
 
     operation "create" submits a job from a YAML spec (requires `file`);
     "show"/"list" inspect jobs; "stream" tails logs of a job (requires
@@ -432,7 +424,7 @@ def azml_online_endpoint(
     set_args: list[str] | None = None,
     no_wait: bool = False,
 ) -> str:
-    """Manage Azure ML online endpoints (`az ml online-endpoint ...`, §9.1).
+    """Manage Azure ML online endpoints (`az ml online-endpoint ...`).
 
     Covers create (endpoint.yaml), update (e.g. traffic "blue=100"), show,
     list, delete (auto-confirmed with --yes). Key retrieval
@@ -489,9 +481,9 @@ def azml_online_deployment(
     set_args: list[str] | None = None,
     no_wait: bool = False,
 ) -> str:
-    """Manage Azure ML online deployments (`az ml online-deployment ...`, §9.1).
+    """Manage Azure ML online deployments (`az ml online-deployment ...`).
 
-    Covers create (deployment-blue.yaml), update, show, list, get-logs
+    Covers create, update, show, list, get-logs
     (container logs, capped via `lines`), delete (auto-confirmed with
     --yes). `endpoint` is the parent online-endpoint name required by
     show/get-logs/delete. Output is forced to table format and truncated.
