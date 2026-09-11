@@ -22,11 +22,7 @@ imbalanced-learn
 tiktoken
 openai
 mlflow>=2.9,<2.14
-ruff
 pytest
 pre-commit
-mcp[cli]
-basedpyright
-azure-cli
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
