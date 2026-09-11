@@ -19,25 +19,29 @@ resource "azurerm_machine_learning_workspace" "this" {
 
 # One datastore per container.
 resource "azurerm_machine_learning_datastore_blobstorage" "raw" {
-  name                 = "ds_raw"
-  workspace_id         = azurerm_machine_learning_workspace.this.id
-  storage_container_id = var.raw_container_id
+  name                       = "ds_raw"
+  workspace_id               = azurerm_machine_learning_workspace.this.id
+  storage_container_id       = var.raw_container_id
+  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "splits" {
-  name                 = "ds_splits"
-  workspace_id         = azurerm_machine_learning_workspace.this.id
-  storage_container_id = var.splits_container_id
+  name                       = "ds_splits"
+  workspace_id               = azurerm_machine_learning_workspace.this.id
+  storage_container_id       = var.splits_container_id
+  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "external" {
-  name                 = "ds_external"
-  workspace_id         = azurerm_machine_learning_workspace.this.id
-  storage_container_id = var.external_container_id
+  name                       = "ds_external"
+  workspace_id               = azurerm_machine_learning_workspace.this.id
+  storage_container_id       = var.external_container_id
+  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
 
 resource "azurerm_machine_learning_datastore_blobstorage" "models" {
-  name                 = "ds_models"
-  workspace_id         = azurerm_machine_learning_workspace.this.id
-  storage_container_id = var.models_container_id
+  name                       = "ds_models"
+  workspace_id               = azurerm_machine_learning_workspace.this.id
+  storage_container_id       = var.models_container_id
+  service_data_auth_identity = "WorkspaceSystemAssignedIdentity"
 }
