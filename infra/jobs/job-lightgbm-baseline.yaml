@@ -1,0 +1,23 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: lightgbm-baseline-cpu
+experiment_name: twitter-sentiment
+description: Phase 3 CPU smoke test — LightGBM TF-IDF baseline on cluster-cpu (see docs/azure-infrastructure-plan.md section 7.3).
+code: ../..
+command: |
+  python -m twitter.baselines.lightgbm_baseline \
+    --train-path ${{inputs.splits}}/tweets_train.csv \
+    --dev-path ${{inputs.splits}}/tweets_dev.csv \
+    --task both \
+    --output-dir ${{outputs.model_dir}}
+inputs:
+  splits:
+    type: uri_folder
+    path: azureml:twitter-splits:1
+outputs:
+  model_dir:
+    type: uri_folder
+environment: azureml:twitter-ml-env:1
+compute: azureml:cluster-cpu
+identity:
+  type: managed_identity

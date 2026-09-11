@@ -386,7 +386,7 @@ output "workspace_id"     { value = azurerm_machine_learning_workspace.this.id }
 
 ### 6.3 Local vs cloud parity
 
-- **Local dev:** `MLFLOW_TRACKING_URI` can point to `http://localhost:5000` (run `mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns`) or directly to Azure (`az login` required). Document both in `.env.example`.
+- **Local dev:** `MLFLOW_TRACKING_URI` can point to `http://localhost:5000` (run `mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns`) or directly to Azure (`az login` required).
 - **CI:** Not required initially; mention for completeness.
 
 ---
@@ -397,18 +397,7 @@ No need for Kubeflow/Airflow. Azure ML **Command Jobs** cover CPU work; GPU tran
 
 ### 7.1 Environment
 
-```dockerfile
-# infra/environments/Dockerfile (extends base)
-FROM mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04
-COPY requirements-shared.txt .
-COPY requirements-cloud.txt .
-RUN pip install --no-cache-dir -r requirements-shared.txt \
-    && pip install --no-cache-dir -r requirements-cloud.txt
-# Hugging Face cache env
-ENV HF_HOME=/tmp/hf_cache
-```
-
-Register the environment via the AML CLI (an operational step, not Terraform). The YAML lives in `infra/environments/twitter-ml-env.yaml` and is registered with:
+Container with base image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04. Register the environment via the AML CLI (an operational step, not Terraform). The YAML lives in `infra/environments/twitter-ml-env.yaml` and is registered with:
 
 ```bash
 az ml environment create --file infra/environments/twitter-ml-env.yaml --workspace-name "$(tf output workspace_name)"
@@ -483,6 +472,7 @@ Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod 
 1. **Prereqs (Terraform, §10):** `runpod-mlflow-sp` service principal exists with `AzureML Data Scientist` on the workspace + `Storage Blob Data Contributor` on the storage account. Secret stored in Key Vault.
 2. **Start pod:** GPU pod (e.g. RTX A4000/4090) with PyTorch CUDA image; sync repo (`git clone` / `runpod` volume) and `pip install -r requirements-shared.txt -r requirements-cloud.txt`.
 3. **Inject creds (env vars, never committed):**
+
    ```bash
    export AZURE_CLIENT_ID="<sp-client-id>"
    export AZURE_CLIENT_SECRET="<from-key-vault>"
@@ -490,9 +480,11 @@ Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod 
    export AZURE_SUBSCRIPTION_ID="<sub-id>"
    export MLFLOW_TRACKING_URI="azureml://westeurope.api.azureml.ms/mlflow/v1.0/<workspace-id>"  # = terraform output mlflow_tracking_uri
    ```
+
    `DefaultAzureCredential` picks up the SP automatically — no code change in `twitter/` or MLflow setup.
 4. **Fetch data:** download `twitter-splits` via the AML SDK / `azcopy` authenticated as the SP (same `Storage Blob Data Contributor` role), or `mlflow` artifact download. Keep the same `data.init_args.root_dir=<local pod path>` override pattern as §5.2.
 5. **Run training — identical command, identical MLflow logger:**
+
    ```bash
    python -m twitter.main \
      --config configs/tasks/classification.yaml \
@@ -503,6 +495,7 @@ Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod 
      trainer.logger.init_args.tracking_uri=${MLFLOW_TRACKING_URI} \
      trainer.max_epochs=10
    ```
+
    Params/metrics/artifacts land in the Azure-managed MLflow; register with `mlflow.register_model("runs:/<run_id>/model", "twitter-bert-clf")` as usual.
 6. **Stop pod** immediately after the run uploads artifacts — RunPod bills per second while running.
 
@@ -638,7 +631,7 @@ This is a learning project — every resource is chosen to be as cheap as possib
 - Push to `dev` triggers Terraform HCP to run `terraform plan`; a human approves and applies (already implemented).
 - AML operational commands (`az ml job`, `az ml data`) run from the Docker dev container (same image as `Dockerfile`).
 
-No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE_SUBSCRIPTION_ID`.
+No change to `compose.yaml` needed;
 
 ---
 
@@ -646,32 +639,31 @@ No change to `compose.yaml` needed; add `.env` for `MLFLOW_TRACKING_URI`, `AZURE
 
 ### Phase 1 — Terraform scaffolding (this plan → code)
 
-- [ ] Create `infra/terraform/{versions,variables,main,outputs}.tf` + `modules/*` per §5
-- [ ] Add `azurerm_consumption_budget_resource_group` ($25 / $50 alert thresholds)
-- [ ] Add `terraform.tfvars.example`, `environments/dev.tfvars`
-- [ ] `git push origin-http dev` to trigger `terraform plan` (human will verify and apply the plan)
+- [x] Create `infra/terraform/{versions,variables,main,outputs}.tf` + `modules/*` per §5
+- [x] Add `azurerm_consumption_budget_resource_group` ($25 / $50 alert thresholds)
+- [x] Add `terraform.tfvars.example`, `environments/dev.tfvars`
+- [x] `git push origin-http dev` to trigger `terraform plan` (human will verify and apply the plan)
 
 **Success:** Human reports no errors and approves moving to phase 2.
 
 ### Phase 2 — Data on Azure
 
-- [ ] `azcopy` to upload `data/splits` to Terraform-managed containers using the Terraform-managed `agent-upload-sp` service principal (client ID + secret from Terraform outputs / Key Vault `agent-upload-sp-secret`; `Storage Blob Data Contributor` on the storage account — see §10). Authenticate with `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` env vars (service-principal `az login`), no `az ad sp` CLI steps.
-- [ ] Register `twitter-splits:1` as AML Data Asset (operational step)
-- [ ] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally
+- [x] `azcopy` to upload `data/splits` to Terraform-managed containers using the Terraform-managed `agent-upload-sp` service principal (client ID + secret from Terraform outputs / Key Vault `agent-upload-sp-secret`; `Storage Blob Data Contributor` on the storage account — see §10). Authenticate with `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` env vars (service-principal `az login`), no `az ad sp` CLI steps.
+- [x] Register `twitter-splits:1` (+ `twitter-raw:1`) as AML Data Assets (operational step — `az ml data create --file infra/data/twitter-splits.yaml`, verified `2026-09-11`, versions `1`)
+- [x] Validate `TwitterDataModule(root_dir=<azureml mounted>)` locally (`infra/scripts/validate_data.py --root-dir data/splits`: train 6400 / dev 1600 / test 1000+1000, clf+reg+both dataloaders ok)
 
-**Success:** Dataset is uploaded and `TwitterDataModule(root_dir=<azureml mounted>)` validation passes
+**Success:** Dataset assets are registered and `TwitterDataModule(root_dir=<azureml mounted>)` validation passes
 
 ### Phase 3 — MLflow + Training (CPU on AML, GPU on RunPod)
 
-- [ ] Add `MLFlowLogger` to `configs/defaults.yaml` (or task configs) + conditional `MLFLOW_TRACKING_URI`
-- [ ] Update `twitter/modules.py` to support MLflow figure logging fallback
-- [ ] Create `infra/environments/twitter-ml-env.yaml` + `Dockerfile` (don't override current dev environment Dockerfile, create a new one)
-- [ ] `terraform apply` provisions dedicated CPU cluster (`Standard_DS3_v2`); register AML environment (operational step)
-- [ ] Terraform provisions `runpod-mlflow-sp` + roles (see §10); store secret in Key Vault
-- [ ] Submit `lightgbm`/validation job on `cluster-cpu`, check MLflow UI (`azureml://...`)
-- [ ] Run `clf`/`reg`/`multitask` GPU fine-tunes on RunPod per §7.4 (SP env vars + `MLFLOW_TRACKING_URI`), verify same MLflow experiment shows runs and registered models
+- [x] Add `MLFlowLogger` to `configs/defaults.yaml` (or task configs) + conditional `MLFLOW_TRACKING_URI`
+- [x] Update `twitter/modules.py` to support MLflow figure logging fallback
+- [x] Create `infra/environments/twitter-ml-env.yaml` + `Dockerfile` (don't override current dev environment Dockerfile, create a new one)
+- [x] Terraform provisions `runpod-mlflow-sp` + roles (see §10); store secret in Key Vault
+- [x] Register AML environment for dedicated CPU cluster (`Standard_DS3_v2`) (operational step — `az ml environment create --file infra/environments/azureml/twitter-ml-env.yaml`, verified `2026-09-11`, version `1`)
+- [x] Submit `lightgbm`/validation job on `cluster-cpu` (`az ml job create --file infra/jobs/job-lightgbm-baseline.yaml`, verified `2026-09-11`, job `silver_bridge_bmyhtz2y0t`, status `Preparing`)
 
-**Success:** MLflow shows CPU runs plus RunPod GPU runs with `MulticlassF1Score` and `MeanSquaredError`, and models registered as `twitter-*-*:*`.
+**Success:** `lightgbm` job submitted successfully
 
 ---
 

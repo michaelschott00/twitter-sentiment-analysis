@@ -8,7 +8,7 @@ command: >-
     trainer.logger.init_args.experiment_name=twitter-clf
     trainer.logger.init_args.tracking_uri=${{env.MLFLOW_TRACKING_URI}}
     trainer.max_epochs=10
-code: .
+code: ../..
 inputs:
   splits:
     type: uri_folder
