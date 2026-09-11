@@ -29,6 +29,20 @@ resource "azurerm_role_assignment" "ws_msi_acr" {
   principal_id         = var.workspace_principal_id
 }
 
+# Compute cluster system-assigned managed identity -> Storage Blob Data
+# Contributor + Reader on the storage account (read datasets, write outputs).
+resource "azurerm_role_assignment" "compute_storage_contributor" {
+  scope                = var.storage_account_id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_machine_learning_compute_cluster.cpu.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "compute_storage_reader" {
+  scope                = var.storage_account_id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azurerm_machine_learning_compute_cluster.cpu.identity[0].principal_id
+}
+
 # Signed-in user -> AzureML Data Scientist on workspace (required for az ml jobs).
 resource "azurerm_role_assignment" "user_ml_ds" {
   scope                = var.workspace_id

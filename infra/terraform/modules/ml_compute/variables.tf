@@ -15,6 +15,11 @@ variable "container_registry_id" {
   type = string
 }
 
+variable "storage_account_id" {
+  description = "Resource ID of the ML storage account (scope for compute cluster blob role assignments)."
+  type        = string
+}
+
 variable "vm_size" {
   description = "VM size for the dedicated CPU training cluster."
   type        = string

@@ -84,6 +84,7 @@ module "ml_compute" {
   workspace_id           = module.ml_workspace.id
   workspace_principal_id = module.ml_workspace.principal_id
   container_registry_id  = module.acr.id
+  storage_account_id     = module.storage.account_id
 
   vm_size     = var.compute_vm_size
   vm_priority = var.vm_priority
