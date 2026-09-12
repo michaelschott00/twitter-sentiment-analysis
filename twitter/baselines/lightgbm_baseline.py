@@ -3,6 +3,11 @@
 Uses TF-IDF features (no metadata) with tunable ngram_range.
 Applies SMOTE to TF-IDF for classification to address class imbalance.
 Evaluates on holdout dev set: macro F1 for classification, RMSE for regression.
+
+This script is intended to run only as an Azure Machine Learning job.
+MLflow tracking is always enabled and ``MLFLOW_TRACKING_URI`` is provided
+automatically by Azure ML, so it must not be set manually and tracking
+must not be disabled.
 """
 
 import os
@@ -23,6 +28,8 @@ except ImportError:
     _has_rmse = False
 
 import lightgbm as lgb
+import mlflow
+import mlflow.lightgbm
 
 from twitter.labels import LABEL_CODING
 
@@ -90,6 +97,13 @@ def _compute_rmse(y_true, y_pred) -> float:
 @click.option("--n-estimators", default=100, type=int, help="LightGBM n_estimators")
 @click.option("--learning-rate", default=0.1, type=float, help="LightGBM learning_rate")
 @click.option("--num-leaves", default=31, type=int, help="LightGBM num_leaves")
+@click.option(
+    "--experiment-name",
+    default="twitter-lightgbm-baseline",
+    type=str,
+    help="MLflow experiment name",
+)
+@click.option("--run-name", default=None, type=str, help="MLflow run name (optional)")
 def main(
     train_path,
     dev_path,
@@ -104,6 +118,8 @@ def main(
     n_estimators,
     learning_rate,
     num_leaves,
+    experiment_name,
+    run_name,
 ):
     """Train LightGBM baseline on TF-IDF features and evaluate on holdout dev set."""
     if ngram_min < 1 or ngram_max < 1:
@@ -113,6 +129,65 @@ def main(
 
     ngram_range = (ngram_min, ngram_max)
     max_features_val = None if max_features == 0 else max_features
+
+    # --- MLflow setup ---
+    # This script runs only on Azure ML with MLflow enabled. Azure ML sets
+    # MLFLOW_TRACKING_URI automatically, so do not override it here.
+    mlflow.set_experiment(experiment_name)
+    with mlflow.start_run(run_name=run_name) as run:
+        mlflow.log_params(
+            {
+                "train_path": train_path,
+                "dev_path": dev_path,
+                "ngram_min": ngram_min,
+                "ngram_max": ngram_max,
+                "max_features": max_features,
+                "use_smote": use_smote,
+                "smote_k": smote_k,
+                "random_state": random_state,
+                "task": task,
+                "n_estimators": n_estimators,
+                "learning_rate": learning_rate,
+                "num_leaves": num_leaves,
+            }
+        )
+        mlflow.set_tag("model", "lightgbm-tfidf")
+        click.echo(
+            f"MLflow experiment={experiment_name!r} "
+            f"run_id={run.info.run_id} run_name={run.data.tags.get('mlflow.runName')}"
+        )
+
+        results = _run(
+            train_path=train_path,
+            dev_path=dev_path,
+            ngram_range=ngram_range,
+            max_features_val=max_features_val,
+            use_smote=use_smote,
+            smote_k=smote_k,
+            random_state=random_state,
+            task=task,
+            output_dir=output_dir,
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            num_leaves=num_leaves,
+        )
+        return results
+
+
+def _run(
+    train_path,
+    dev_path,
+    ngram_range,
+    max_features_val,
+    use_smote,
+    smote_k,
+    random_state,
+    task,
+    output_dir,
+    n_estimators,
+    learning_rate,
+    num_leaves,
+):
 
     click.echo(f"Loading data from {train_path} and {dev_path}")
     df_train, df_dev = _load_data(train_path, dev_path)
@@ -138,6 +213,14 @@ def main(
     X_train_vec = vectorizer.fit_transform(X_train_text)
     X_dev_vec = vectorizer.transform(X_dev_text)
     click.echo(f"TF-IDF shapes: train {X_train_vec.shape}, dev {X_dev_vec.shape}")
+    mlflow.log_params(
+        {
+            "ngram_range": str(ngram_range),
+            "tfidf_vocab_size": X_train_vec.shape[1],
+            "train_rows": X_train_vec.shape[0],
+            "dev_rows": X_dev_vec.shape[0],
+        }
+    )
 
     results = {}
 
@@ -208,13 +291,15 @@ def main(
             macro_f1 = f1_score(y_dev_clf, y_pred, average="macro")
             click.echo(f"Classification Macro F1 (dev): {macro_f1:.4f}")
             results["macro_f1"] = macro_f1
+            mlflow.log_metric("macro_f1", macro_f1)
 
             # also show per-class report optionally
             from sklearn.metrics import classification_report
 
-            click.echo(
-                classification_report(y_dev_clf, y_pred, digits=4, zero_division=0)
-            )
+            report = classification_report(y_dev_clf, y_pred, digits=4, zero_division=0)
+            click.echo(report)
+            mlflow.log_text(report, "classification_report.txt")
+            mlflow.lightgbm.log_model(clf, "lgbm_classifier")
 
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -223,6 +308,8 @@ def main(
                     vectorizer, os.path.join(output_dir, "tfidf_vectorizer.joblib")
                 )
                 click.echo(f"Saved classifier and vectorizer to {output_dir}")
+                mlflow.log_artifact(os.path.join(output_dir, "lgbm_classifier.joblib"))
+                mlflow.log_artifact(os.path.join(output_dir, "tfidf_vectorizer.joblib"))
 
     # Regression
     if task in ("reg", "both"):
@@ -246,6 +333,8 @@ def main(
             rmse = _compute_rmse(y_dev_reg, y_pred_reg)
             click.echo(f"Regression RMSE (dev): {rmse:.4f}")
             results["rmse"] = rmse
+            mlflow.log_metric("rmse", rmse)
+            mlflow.lightgbm.log_model(reg, "lgbm_regressor")
 
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -256,6 +345,21 @@ def main(
                     )
                 joblib.dump(reg, os.path.join(output_dir, "lgbm_regressor.joblib"))
                 click.echo(f"Saved regressor to {output_dir}")
+                mlflow.log_artifact(os.path.join(output_dir, "lgbm_regressor.joblib"))
+                if task == "reg":
+                    mlflow.log_artifact(
+                        os.path.join(output_dir, "tfidf_vectorizer.joblib")
+                    )
+
+    # Log vectorizer when it wasn't saved via --output-dir so the run stays
+    # reproducible from MLflow alone.
+    if not output_dir:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vec_path = os.path.join(tmpdir, "tfidf_vectorizer.joblib")
+            joblib.dump(vectorizer, vec_path)
+            mlflow.log_artifact(vec_path)
 
     # final summary
     click.echo(f"Done. Results: {results}")
