@@ -5,9 +5,9 @@ Applies SMOTE to TF-IDF for classification to address class imbalance.
 Evaluates on holdout dev set: macro F1 for classification, RMSE for regression.
 
 This script is intended to run only as an Azure Machine Learning job.
-MLflow tracking is always enabled and ``MLFLOW_TRACKING_URI`` is provided
-automatically by Azure ML, so it must not be set manually and tracking
-must not be disabled.
+MLflow tracking is always enabled: Azure ML provides ``MLFLOW_TRACKING_URI``,
+the experiment, and the active run automatically, so the script must not set
+any of these itself and tracking must not be disabled.
 """
 
 import os
@@ -97,13 +97,6 @@ def _compute_rmse(y_true, y_pred) -> float:
 @click.option("--n-estimators", default=100, type=int, help="LightGBM n_estimators")
 @click.option("--learning-rate", default=0.1, type=float, help="LightGBM learning_rate")
 @click.option("--num-leaves", default=31, type=int, help="LightGBM num_leaves")
-@click.option(
-    "--experiment-name",
-    default="twitter-lightgbm-baseline",
-    type=str,
-    help="MLflow experiment name",
-)
-@click.option("--run-name", default=None, type=str, help="MLflow run name (optional)")
 def main(
     train_path,
     dev_path,
@@ -118,8 +111,6 @@ def main(
     n_estimators,
     learning_rate,
     num_leaves,
-    experiment_name,
-    run_name,
 ):
     """Train LightGBM baseline on TF-IDF features and evaluate on holdout dev set."""
     if ngram_min < 1 or ngram_max < 1:
@@ -130,48 +121,43 @@ def main(
     ngram_range = (ngram_min, ngram_max)
     max_features_val = None if max_features == 0 else max_features
 
-    # --- MLflow setup ---
-    # This script runs only on Azure ML with MLflow enabled. Azure ML sets
-    # MLFLOW_TRACKING_URI automatically, so do not override it here.
-    mlflow.set_experiment(experiment_name)
-    with mlflow.start_run(run_name=run_name) as run:
-        mlflow.log_params(
-            {
-                "train_path": train_path,
-                "dev_path": dev_path,
-                "ngram_min": ngram_min,
-                "ngram_max": ngram_max,
-                "max_features": max_features,
-                "use_smote": use_smote,
-                "smote_k": smote_k,
-                "random_state": random_state,
-                "task": task,
-                "n_estimators": n_estimators,
-                "learning_rate": learning_rate,
-                "num_leaves": num_leaves,
-            }
-        )
-        mlflow.set_tag("model", "lightgbm-tfidf")
-        click.echo(
-            f"MLflow experiment={experiment_name!r} "
-            f"run_id={run.info.run_id} run_name={run.data.tags.get('mlflow.runName')}"
-        )
+    # --- MLflow logging ---
+    # This script runs only on Azure ML, which provides the tracking URI, the
+    # experiment, and the active run automatically. Log directly to that run:
+    # do not set the experiment or start a run here.
+    mlflow.log_params(
+        {
+            "train_path": train_path,
+            "dev_path": dev_path,
+            "ngram_min": ngram_min,
+            "ngram_max": ngram_max,
+            "max_features": max_features,
+            "use_smote": use_smote,
+            "smote_k": smote_k,
+            "random_state": random_state,
+            "task": task,
+            "n_estimators": n_estimators,
+            "learning_rate": learning_rate,
+            "num_leaves": num_leaves,
+        }
+    )
+    mlflow.set_tag("model", "lightgbm-tfidf")
 
-        results = _run(
-            train_path=train_path,
-            dev_path=dev_path,
-            ngram_range=ngram_range,
-            max_features_val=max_features_val,
-            use_smote=use_smote,
-            smote_k=smote_k,
-            random_state=random_state,
-            task=task,
-            output_dir=output_dir,
-            n_estimators=n_estimators,
-            learning_rate=learning_rate,
-            num_leaves=num_leaves,
-        )
-        return results
+    results = _run(
+        train_path=train_path,
+        dev_path=dev_path,
+        ngram_range=ngram_range,
+        max_features_val=max_features_val,
+        use_smote=use_smote,
+        smote_k=smote_k,
+        random_state=random_state,
+        task=task,
+        output_dir=output_dir,
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        num_leaves=num_leaves,
+    )
+    return results
 
 
 def _run(
@@ -249,7 +235,7 @@ def _run(
                         f"Warning: dense TF-IDF would be {dense_size} entries, may be heavy. "
                         "Consider reducing max_features."
                     )
-                # convert sparse to dense
+                # convert scipy.sparse.csr_matrix (sparse) to np.ndarray (dense)
                 if hasattr(X_clf_train, "toarray"):
                     X_dense = X_clf_train.toarray()
                 else:
@@ -268,12 +254,6 @@ def _run(
                 click.echo(
                     f"After SMOTE: {X_clf_train.shape}, dist {np.bincount(y_clf_train)}"
                 )
-                # keep dev as sparse; LightGBM can handle dense train + sparse dev via consistent transform?
-                # For dev we keep sparse but convert to dense for prediction consistency if train was dense?
-                # LightGBM handles both, but we convert dev to dense array for consistent input type
-                # Actually LightGBM handles sparse and dense separately; dense train + sparse dev is okay
-                # but to be safe, keep dev as dense array of same dtype if needed
-                # We leave X_dev_vec as is (sparse) and let predict handle it
             else:
                 click.echo("SMOTE disabled")
 
