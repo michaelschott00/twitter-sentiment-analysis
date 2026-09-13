@@ -63,6 +63,20 @@ def _compute_rmse(y_true, y_pred) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
+def _make_input_example(vectorizer, X_vec, n_rows: int = 5) -> pd.DataFrame:
+    """Build a small dense DataFrame example for MLflow signature inference."""
+    try:
+        feature_names = list(vectorizer.get_feature_names_out())
+    except Exception:  # noqa: BLE001
+        feature_names = [f"f{i}" for i in range(X_vec.shape[1])]
+    n = min(n_rows, X_vec.shape[0])
+    if hasattr(X_vec, "toarray"):
+        arr = X_vec[:n].toarray()
+    else:
+        arr = np.asarray(X_vec[:n])
+    return pd.DataFrame(arr, columns=feature_names)
+
+
 @click.command()
 @click.option(
     "--train-path", default="data/splits/tweets_train.csv", help="Path to train CSV"
@@ -97,6 +111,21 @@ def _compute_rmse(y_true, y_pred) -> float:
 @click.option("--n-estimators", default=100, type=int, help="LightGBM n_estimators")
 @click.option("--learning-rate", default=0.1, type=float, help="LightGBM learning_rate")
 @click.option("--num-leaves", default=31, type=int, help="LightGBM num_leaves")
+@click.option(
+    "--register/--no-register",
+    default=True,
+    help="Register models in the MLflow Model Registry (Azure ML)",
+)
+@click.option(
+    "--registered-clf-name",
+    default="twitter-lightgbm-clf",
+    help="Registered model name for the classifier",
+)
+@click.option(
+    "--registered-reg-name",
+    default="twitter-lightgbm-reg",
+    help="Registered model name for the regressor",
+)
 def main(
     train_path,
     dev_path,
@@ -111,6 +140,9 @@ def main(
     n_estimators,
     learning_rate,
     num_leaves,
+    register,
+    registered_clf_name,
+    registered_reg_name,
 ):
     """Train LightGBM baseline on TF-IDF features and evaluate on holdout dev set."""
     if ngram_min < 1 or ngram_max < 1:
@@ -139,6 +171,9 @@ def main(
             "n_estimators": n_estimators,
             "learning_rate": learning_rate,
             "num_leaves": num_leaves,
+            "register": register,
+            "registered_clf_name": registered_clf_name,
+            "registered_reg_name": registered_reg_name,
         }
     )
     mlflow.set_tag("model", "lightgbm-tfidf")
@@ -156,6 +191,9 @@ def main(
         n_estimators=n_estimators,
         learning_rate=learning_rate,
         num_leaves=num_leaves,
+        register=register,
+        registered_clf_name=registered_clf_name,
+        registered_reg_name=registered_reg_name,
     )
     return results
 
@@ -173,6 +211,9 @@ def _run(
     n_estimators,
     learning_rate,
     num_leaves,
+    register=True,
+    registered_clf_name="twitter-lightgbm-clf",
+    registered_reg_name="twitter-lightgbm-reg",
 ):
 
     click.echo(f"Loading data from {train_path} and {dev_path}")
@@ -207,6 +248,9 @@ def _run(
             "dev_rows": X_dev_vec.shape[0],
         }
     )
+
+    # Small dense example so MLflow can auto-infer a model signature.
+    input_example = _make_input_example(vectorizer, X_train_vec)
 
     results = {}
 
@@ -279,7 +323,12 @@ def _run(
             report = classification_report(y_dev_clf, y_pred, digits=4, zero_division=0)
             click.echo(report)
             mlflow.log_text(report, "classification_report.txt")
-            mlflow.lightgbm.log_model(clf, "lgbm_classifier")
+            mlflow.lightgbm.log_model(
+                clf,
+                "lgbm_classifier",
+                input_example=input_example,
+                registered_model_name=registered_clf_name if register else None,
+            )
 
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -314,7 +363,12 @@ def _run(
             click.echo(f"Regression RMSE (dev): {rmse:.4f}")
             results["rmse"] = rmse
             mlflow.log_metric("rmse", rmse)
-            mlflow.lightgbm.log_model(reg, "lgbm_regressor")
+            mlflow.lightgbm.log_model(
+                reg,
+                "lgbm_regressor",
+                input_example=input_example,
+                registered_model_name=registered_reg_name if register else None,
+            )
 
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
