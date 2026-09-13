@@ -1,0 +1,33 @@
+#!/bin/bash
+source ../.env
+
+usage() {
+  echo "Usage: $(basename "$0") {up|agent|sidecar|down|rebuild}"
+  echo "  up       - docker compose up -d"
+  echo "  agent    - run dev container"
+  echo "  sidecar  - exec into sidecar"
+  echo "  down     - docker compose down"
+  echo "  rebuild  - docker compose down && docker compose build"
+}
+
+case "$1" in
+  up)
+    docker compose up -d
+    ;;
+  agent)
+    HERDR_AGENT=opencode docker compose run --rm --remove-orphans dev
+    ;;
+  sidecar)
+    docker compose exec sidecar /bin/bash
+    ;;
+  down)
+    docker compose down
+    ;;
+  rebuild)
+    docker compose down && docker compose build
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
