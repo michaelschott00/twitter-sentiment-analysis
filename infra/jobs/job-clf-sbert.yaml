@@ -13,7 +13,7 @@ inputs:
   splits:
     type: uri_folder
     path: azureml:twitter-splits:1
-environment: azureml:twitter-ml-env:1
+environment: azureml:twitter-ml-env:2
 compute: azureml:cluster-gpu-spot
 experiment_name: twitter-sentiment
 display_name: sbert-clf-run

@@ -21,8 +21,10 @@ lightgbm
 imbalanced-learn
 tiktoken
 openai
-mlflow>=2.9,<2.14
+mlflow<=2.16.2
 pytest
+ruff
+basedpyright
 pre-commit
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch

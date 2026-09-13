@@ -15,6 +15,6 @@ RUN pip install --no-cache-dir \
     "tqdm" \
     "lightgbm" \
     "imbalanced-learn" \
-    "mlflow>=2.9,<2.14" \
+    "mlflow<=2.16.2" \
     "azure-ai-ml" \
     "azureml-mlflow"

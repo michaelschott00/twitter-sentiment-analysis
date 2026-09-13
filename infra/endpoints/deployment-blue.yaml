@@ -5,7 +5,7 @@ model: azureml:twitter-sbert-clf:2
 code_configuration:
   code: scoring/
   scoring_script: score.py
-environment: azureml:twitter-ml-env:1
+environment: azureml:twitter-ml-env:2
 environment_variables:
   # Hugging Face encoder the classifier was fine-tuned from.
   ENCODER_NAME: sentence-transformers/bert-base-nli-mean-tokens

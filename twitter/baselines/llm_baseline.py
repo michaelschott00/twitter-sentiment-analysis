@@ -31,7 +31,7 @@ except ImportError:
 
 from twitter.labels import LABEL_CODING
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_ENCODING = "o200k_base"
 
 SYSTEM_PROMPT = (
@@ -253,7 +253,7 @@ def _compute_rmse(y_true, y_pred) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def call_llm(client, model: str, messages: list[dict], temperature: float = 0.0) -> str:
+def call_llm(client, model: str, messages: list[dict], temperature: float = 1.0) -> str:
     """Call chat completions and return content string."""
     # Try with json response_format for models that support it
     kwargs = {
@@ -304,7 +304,7 @@ def call_llm(client, model: str, messages: list[dict], temperature: float = 0.0)
 )
 @click.option(
     "--temperature",
-    default=0.0,
+    default=1.0,
     type=float,
     help="LLM temperature (0 for deterministic)",
 )

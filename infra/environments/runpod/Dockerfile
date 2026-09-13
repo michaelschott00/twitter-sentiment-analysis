@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir \
     "click" \
     "pyyaml" \
     "tqdm" \
-    "mlflow>=2.9,<2.14" \
+    "mlflow<=2.16.2" \
     "azure-ai-ml" \
     "azureml-mlflow"
 
