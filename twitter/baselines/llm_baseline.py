@@ -8,6 +8,7 @@ tiktoken and dry-run mode when credentials are missing.
 import json
 import os
 import re
+from datetime import datetime, timezone
 
 import click
 import numpy as np
@@ -338,6 +339,7 @@ def main(
     dry_run,
 ):
     """LLM baseline: few-shot sentiment + valence via OpenAI API on dev set."""
+    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     # --estimate-tokens path
     if estimate_tokens:
         estimate_token_counts(dev_path, encoding)
@@ -421,11 +423,15 @@ def main(
     if limit is not None:
         df_dev = df_dev.iloc[:limit]
 
+    run_dir = os.path.join("results", run_timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+
     y_true_clf: list[int] = []
     y_pred_clf: list[int] = []
     y_true_reg: list[float] = []
     y_pred_reg: list[float] = []
     raw_outputs: list[dict] = []
+    llm_responses: list[dict] = []
 
     for idx, row in tqdm(df_dev.iterrows(), total=len(df_dev), desc="LLM eval"):
         tweet = str(row["text"])
@@ -463,6 +469,19 @@ def main(
                 "raw": content,
             }
         )
+        llm_responses.append(
+            {
+                "id": row.get("id", idx),
+                "llm_response": content,
+            }
+        )
+
+    # Always log raw LLM responses to timestamped run folder in results/
+    llm_log_path = os.path.join(run_dir, "llm_responses.csv")
+    pd.DataFrame(llm_responses, columns=["id", "llm_response"]).to_csv(
+        llm_log_path, index=False
+    )
+    click.echo(f"Saved LLM responses to {llm_log_path}")
 
     # Evaluate
     if y_true_clf:
