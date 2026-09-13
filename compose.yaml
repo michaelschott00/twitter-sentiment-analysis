@@ -6,12 +6,9 @@ services:
     volumes:
       - .:/workspace
       - ~/.cache/pre-commit:/home/agent/.cache/pre-commit
-      - ~/.hermes:/home/agent/.hermes
       - ~/.config/opencode:/home/agent/.config/opencode
       - ~/.local/share/opencode:/home/agent/.local/share/opencode
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
-    environment:
-      - HERMES_HOME=/home/agent/.hermes
 
   sidecar:
     build:

@@ -2,16 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /workspace
 
+ENV HOME=/home/agent
+
 # BuildKit cache mounts (--mount=type=cache) keep downloaded artifacts across
 # rebuilds, so an invalidated layer does not force re-downloading:
 #   id=apt-dev         /var/cache/apt            deb packages (.deb files)
 #   id=downloads-dev   /var/cache/downloads      pinned curl archives + installers
-#   id=npm-dev         /home/agent/.npm          npm/npx cache (playwright, hermes)
-#   id=uv-dev          /home/agent/.cache/uv     uv download cache (hermes venv)
-#   id=playwright-dev  /home/agent/.cache/ms-playwright  browser downloads
-#   id=hermes-dev      /home/agent/.hermes       hermes-managed uv + node
-#   id=pip-dev         /home/agent/.cache/pip    pip wheels (must match PIP_CACHE_DIR,
-#                                                 set below because HOME=/home/agent)
+#   id=pip-dev         $HOME/.cache/pip    pip wheels (must match PIP_CACHE_DIR,
+#                                                 set below because HOME=$HOME)
 #   id=tflint-plugins-dev  /var/cache/tflint-plugins  tflint plugin downloads
 #   id=nltk-dev        /var/cache/nltk           nltk data downloads
 
@@ -21,39 +19,22 @@ RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install hermes
-ENV HERMES_HOME=/home/agent/.hermes
-ENV HOME=/home/agent
-# ENV HERMES_TUI=1
-RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
-RUN --mount=type=cache,id=hermes-dev,target=/home/agent/.hermes,sharing=locked \
-    --mount=type=cache,id=npm-dev,target=/home/agent/.npm,sharing=locked \
-    --mount=type=cache,id=uv-dev,target=/home/agent/.cache/uv,sharing=locked \
-    --mount=type=cache,id=playwright-dev,target=/home/agent/.cache/ms-playwright,sharing=locked \
-    --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
-    { [ -f /var/cache/downloads/hermes-install.sh ] || curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o /var/cache/downloads/hermes-install.sh; } \
-    && bash /var/cache/downloads/hermes-install.sh
-
 # Install opencode (cache the final binary; the installer otherwise re-downloads
 # the release tarball on every invalidated rebuild)
 RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
     { [ -x /var/cache/downloads/opencode ] \
         || { curl -fsSL https://opencode.ai/install | bash \
-             && install -m 755 /home/agent/.opencode/bin/opencode /var/cache/downloads/opencode; }; } \
-    && install -d /home/agent/.opencode/bin \
-    && install -m 755 /var/cache/downloads/opencode /home/agent/.opencode/bin/opencode \
-    && ln -sf /home/agent/.opencode/bin/opencode /usr/local/bin/opencode
-
-# Install playwright system deps (debs and the npx package come from cache)
-RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=npm-dev,target=/home/agent/.npm,sharing=locked \
-    npx playwright install-deps chromium
+             && install -m 755 $HOME/.opencode/bin/opencode /var/cache/downloads/opencode; }; } \
+    && install -d $HOME/.opencode/bin \
+    && install -m 755 /var/cache/downloads/opencode $HOME/.opencode/bin/opencode \
+    && ln -sf $HOME/.opencode/bin/opencode /usr/local/bin/opencode \
+    && mkdir -p $HOME/.config/opencode $HOME/.local/share/opencode $HOME/.local/state/opencode \
+    && $HOME/.opencode/bin/opencode completion >> $HOME/.bashrc
 
 # Install python packages
-ENV PIP_CACHE_DIR=/home/agent/.cache/pip
+ENV PIP_CACHE_DIR=$HOME/.cache/pip
 COPY dev/requirements.txt .
-RUN --mount=type=cache,id=pip-dev,target=/home/agent/.cache/pip,sharing=locked \
+RUN --mount=type=cache,id=pip-dev,target=$HOME/.cache/pip,sharing=locked \
     pip install --break-system-packages -r requirements.txt
 
 # Download NLTK data (downloaded into the cache, then copied into the image so
@@ -91,7 +72,7 @@ RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=lock
     && install -m 755 /var/cache/downloads/terraform /usr/local/bin/terraform
 
 # Install azure-cli (wheels cached in the pip cache mount)
-RUN --mount=type=cache,id=pip-dev,target=/home/agent/.cache/pip,sharing=locked \
+RUN --mount=type=cache,id=pip-dev,target=$HOME/.cache/pip,sharing=locked \
     pip install --break-system-packages azure-cli \
     && az upgrade --yes
 
@@ -103,16 +84,8 @@ RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=lock
 
 # Create unprivileged agent user
 RUN useradd -m -u 1000 agent
-RUN mkdir -p $HERMES_HOME \
-    && chown agent:agent $HERMES_HOME \
-    && mkdir -p $HOME/.config/opencode \
-    && mkdir -p $HOME/.local/share/opencode \
-    && mkdir -p $HOME/.local/state/opencode \
-    && chown agent:agent -R $HOME
+RUN chown -R agent:agent $HOME
 USER agent
-
-# Install opencode shell completions
-RUN /home/agent/.opencode/bin/opencode completion >> /home/agent/.bashrc
 
 # Install the Azure ML extension (as the runtime user, so `az ml` is found)
 RUN az extension add --name ml --yes
