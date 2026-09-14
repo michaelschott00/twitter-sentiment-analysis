@@ -3,12 +3,25 @@
 Uses few-shot prompting to obtain both classification (sentiment) and
 regression (valence) in a single prompt. Supports token estimation with
 tiktoken and dry-run mode when credentials are missing.
+
+MLflow tracking:
+  - Dry-run / --estimate-tokens paths stay fully local (no MLflow calls).
+  - Live mode logs to MLflow: tracking URI is read from the
+    ``MLFLOW_TRACKING_URI`` env var (e.g. an ``azureml://...`` URI when
+    running locally but tracking to an Azure ML workspace), experiment
+    ``twitter-sentiment``, run name ``llm-baseline``.
+  - Authentication to Azure ML is via service-principal env vars
+    (``AZURE_TENANT_ID``, ``AZURE_CLIENT_ID``, ``AZURE_CLIENT_SECRET``),
+    picked up automatically by ``DefaultAzureCredential`` through the
+    ``azureml-mlflow`` plugin — no explicit login code needed.
+  - No model is logged or registered (no training); params, metrics and
+    artifacts (predictions, LLM responses, report, prompts) are tracked.
 """
 
 import json
 import os
 import re
-from datetime import datetime, timezone
+import tempfile
 
 import click
 import numpy as np
@@ -35,6 +48,9 @@ from twitter.labels import LABEL_CODING
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_ENCODING = "o200k_base"
 
+MLFLOW_EXPERIMENT_NAME = "twitter-sentiment"
+MLFLOW_RUN_NAME = "llm-baseline"
+
 SYSTEM_PROMPT = (
     "You are an expert sentiment analysis model for Twitter data, "
     "specialized in AI and Machine Learning related tweets.\n\n"
@@ -52,6 +68,62 @@ SYSTEM_PROMPT = (
     'Example: {"sentiment": "positive", "valence": 0.8}\n'
     "Output ONLY the JSON object, no extra text."
 )
+
+
+def _setup_mlflow_tracking() -> None:
+    """Point MLflow at the tracking URI and experiment.
+
+    Reads the tracking URI from the ``MLFLOW_TRACKING_URI`` env var
+    (e.g. ``azureml://...`` for the Azure ML workspace). When the URI
+    targets Azure ML, authentication relies on the service-principal env
+    vars (``AZURE_TENANT_ID``, ``AZURE_CLIENT_ID``,
+    ``AZURE_CLIENT_SECRET``) via ``DefaultAzureCredential`` in the
+    ``azureml-mlflow`` plugin — no explicit login code needed.
+
+    Falls back to MLflow's default local tracking (``./mlruns``) when the
+    env var is unset.
+    """
+    try:
+        import mlflow
+    except ImportError as e:
+        raise click.ClickException(
+            "MLflow is required for live runs (pip install mlflow azureml-mlflow). "
+            "Use --dry-run for local runs without MLflow."
+        ) from e
+
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+        click.echo(f"MLflow tracking URI: {tracking_uri}")
+    else:
+        click.echo(
+            "MLFLOW_TRACKING_URI not set — using default local tracking (./mlruns).",
+            err=True,
+        )
+
+    if (tracking_uri or "").startswith("azureml://"):
+        missing = [
+            var
+            for var in (
+                "AZURE_TENANT_ID",
+                "AZURE_CLIENT_ID",
+                "AZURE_CLIENT_SECRET",
+            )
+            if not os.getenv(var)
+        ]
+        if missing:
+            click.echo(
+                f"Warning: Azure ML tracking URI set but missing: {', '.join(missing)}. "
+                "Set them for service-principal auth.",
+                err=True,
+            )
+        else:
+            click.echo(
+                "Using service-principal auth from AZURE_* env vars "
+                "(via DefaultAzureCredential)."
+            )
+
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
 
 def get_encoding(encoding_name: str = DEFAULT_ENCODING):
@@ -254,13 +326,12 @@ def _compute_rmse(y_true, y_pred) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def call_llm(client, model: str, messages: list[dict], temperature: float = 1.0) -> str:
+def call_llm(client, model: str, messages: list[dict]) -> str:
     """Call chat completions and return content string."""
     # Try with json response_format for models that support it
     kwargs = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
     }
     # Most regular OpenAI chat models support json_object response_format
     if "gpt-4o" in model or "gpt-5" in model or "gpt-4" in model or "gpt-3.5" in model:
@@ -304,18 +375,6 @@ def call_llm(client, model: str, messages: list[dict], temperature: float = 1.0)
     "--limit", default=None, type=int, help="Limit number of dev tweets (for testing)"
 )
 @click.option(
-    "--temperature",
-    default=1.0,
-    type=float,
-    help="LLM temperature (0 for deterministic)",
-)
-@click.option(
-    "--output",
-    default=None,
-    type=str,
-    help="Path to save predictions CSV (optional)",
-)
-@click.option(
     "--estimate-tokens",
     is_flag=True,
     help="Only estimate tokens for dev tweets and exit (no API call)",
@@ -333,13 +392,10 @@ def main(
     encoding,
     num_shots,
     limit,
-    temperature,
-    output,
     estimate_tokens,
     dry_run,
 ):
     """LLM baseline: few-shot sentiment + valence via OpenAI API on dev set."""
-    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     # --estimate-tokens path
     if estimate_tokens:
         estimate_token_counts(dev_path, encoding)
@@ -415,99 +471,145 @@ def main(
         click.echo("Set OPENAI_API_KEY to run live calls.")
         return
 
-    # Live mode
+    # Live mode (MLflow tracking enabled; dry-run above stays fully local)
     assert client is not None
-    click.echo(
-        f"\nCalling model {model} for {len(df_dev) if limit is None else limit} tweets ..."
-    )
-    if limit is not None:
-        df_dev = df_dev.iloc[:limit]
-
-    run_dir = os.path.join("results", run_timestamp)
-    os.makedirs(run_dir, exist_ok=True)
-
-    y_true_clf: list[int] = []
-    y_pred_clf: list[int] = []
-    y_true_reg: list[float] = []
-    y_pred_reg: list[float] = []
-    raw_outputs: list[dict] = []
-    llm_responses: list[dict] = []
-
-    for idx, row in tqdm(df_dev.iterrows(), total=len(df_dev), desc="LLM eval"):
-        tweet = str(row["text"])
-        messages = build_messages(tweet, few_shot, SYSTEM_PROMPT)
-        try:
-            content = call_llm(client, model, messages, temperature=temperature)
-            sentiment, valence = parse_model_output(content)
-        except Exception as e:  # noqa: BLE001
-            click.echo(f"Row {idx} API/parse error: {e}", err=True)
-            # fallback to neutral 0
-            sentiment, valence = "neutral", 0.0
-            content = f"ERROR: {e}"
-
-        # true labels
-        if "sentiment" in row:
-            true_sent = str(row["sentiment"])
-            # handle encoded ints
-            if true_sent.isdigit() or (true_sent.lstrip("-").isdigit()):
-                true_sent_id = int(true_sent)
-            else:
-                true_sent_id = LABEL_CODING.get(true_sent, 1)
-            pred_id = LABEL_CODING[sentiment]
-            y_true_clf.append(true_sent_id)
-            y_pred_clf.append(pred_id)
-        if "score_compound" in row:
-            y_true_reg.append(float(row["score_compound"]))
-            y_pred_reg.append(float(valence))
-
-        raw_outputs.append(
+    try:
+        import mlflow
+    except ImportError as e:
+        raise click.ClickException(
+            "MLflow is required for live runs (pip install mlflow azureml-mlflow). "
+            "Use --dry-run for local runs without MLflow."
+        ) from e
+    _setup_mlflow_tracking()
+    with mlflow.start_run(run_name=MLFLOW_RUN_NAME):
+        mlflow.log_params(
             {
-                "id": row.get("id", idx),
-                "text": tweet,
-                "pred_sentiment": sentiment,
-                "pred_valence": valence,
-                "raw": content,
+                "model": model,
+                "num_shots": num_shots,
+                "limit": limit if limit is not None else -1,
+                "encoding": encoding,
+                "dev_path": dev_path,
+                "train_path": train_path,
+                "base_url": base_url
+                or os.getenv("OPENAI_BASE_URL")
+                or os.getenv("OPENAI_API_BASE")
+                or "",
             }
         )
-        llm_responses.append(
+        mlflow.set_tags({"baseline": "llm", "model": model})
+        mlflow.log_text(SYSTEM_PROMPT, "system_prompt.txt")
+        mlflow.log_text(
+            json.dumps(few_shot, indent=2, ensure_ascii=False),
+            "few_shot_examples.json",
+        )
+        mlflow.log_params(
             {
-                "id": row.get("id", idx),
-                "llm_response": content,
+                "dev_rows_total": len(df_dev),
+                "dev_total_tokens": int(dev_counts.sum()),
+                "dev_avg_tokens": float(dev_counts.mean()),
+                "system_prompt_tokens": count_tokens(SYSTEM_PROMPT, enc),
             }
         )
-
-    # Always log raw LLM responses to timestamped run folder in results/
-    llm_log_path = os.path.join(run_dir, "llm_responses.csv")
-    pd.DataFrame(llm_responses, columns=["id", "llm_response"]).to_csv(
-        llm_log_path, index=False
-    )
-    click.echo(f"Saved LLM responses to {llm_log_path}")
-
-    # Evaluate
-    if y_true_clf:
-        macro_f1 = f1_score(y_true_clf, y_pred_clf, average="macro")
-        click.echo(f"Classification Macro F1 (dev): {macro_f1:.4f}")
-        from sklearn.metrics import classification_report
 
         click.echo(
-            classification_report(y_true_clf, y_pred_clf, digits=4, zero_division=0)
+            f"\nCalling model {model} for {len(df_dev) if limit is None else limit} tweets ..."
         )
-    else:
-        click.echo("No classification labels for eval.")
+        if limit is not None:
+            df_dev = df_dev.iloc[:limit]
 
-    if y_true_reg:
-        rmse = _compute_rmse(np.array(y_true_reg), np.array(y_pred_reg))
-        click.echo(f"Regression RMSE (dev): {rmse:.4f}")
-    else:
-        click.echo("No regression labels for eval.")
+        y_true_clf: list[int] = []
+        y_pred_clf: list[int] = []
+        y_true_reg: list[float] = []
+        y_pred_reg: list[float] = []
+        raw_outputs: list[dict] = []
+        llm_responses: list[dict] = []
+        num_errors = 0
 
-    if output:
-        os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
-        out_df = pd.DataFrame(raw_outputs)
-        out_df.to_csv(output, index=False)
-        click.echo(f"Saved predictions to {output}")
+        for idx, row in tqdm(df_dev.iterrows(), total=len(df_dev), desc="LLM eval"):
+            tweet = str(row["text"])
+            messages = build_messages(tweet, few_shot, SYSTEM_PROMPT)
+            try:
+                content = call_llm(client, model, messages)
+                sentiment, valence = parse_model_output(content)
+            except Exception as e:  # noqa: BLE001
+                click.echo(f"Row {idx} API/parse error: {e}", err=True)
+                # fallback to neutral 0
+                sentiment, valence = "neutral", 0.0
+                content = f"ERROR: {e}"
+                num_errors += 1
 
-    click.echo("Done.")
+            # true labels
+            if "sentiment" in row:
+                true_sent = str(row["sentiment"])
+                # handle encoded ints
+                if true_sent.isdigit() or (true_sent.lstrip("-").isdigit()):
+                    true_sent_id = int(true_sent)
+                else:
+                    true_sent_id = LABEL_CODING.get(true_sent, 1)
+                pred_id = LABEL_CODING[sentiment]
+                y_true_clf.append(true_sent_id)
+                y_pred_clf.append(pred_id)
+            if "score_compound" in row:
+                y_true_reg.append(float(row["score_compound"]))
+                y_pred_reg.append(float(valence))
+
+            raw_outputs.append(
+                {
+                    "id": row.get("id", idx),
+                    "text": tweet,
+                    "pred_sentiment": sentiment,
+                    "pred_valence": valence,
+                    "raw": content,
+                }
+            )
+            llm_responses.append(
+                {
+                    "id": row.get("id", idx),
+                    "llm_response": content,
+                }
+            )
+
+        # Log predictions and raw LLM responses to MLflow only (no local copy).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            llm_log_path = os.path.join(tmpdir, "llm_responses.csv")
+            pd.DataFrame(llm_responses, columns=["id", "llm_response"]).to_csv(
+                llm_log_path, index=False
+            )
+            mlflow.log_artifact(llm_log_path)
+
+            predictions_path = os.path.join(tmpdir, "predictions.csv")
+            pd.DataFrame(raw_outputs).to_csv(predictions_path, index=False)
+            mlflow.log_artifact(predictions_path)
+        click.echo("Logged predictions and LLM responses to MLflow.")
+
+        mlflow.log_metric("num_rows", float(len(df_dev)))
+        mlflow.log_metric("num_errors", float(num_errors))
+
+        # Evaluate
+        if y_true_clf:
+            macro_f1 = f1_score(y_true_clf, y_pred_clf, average="macro")
+            click.echo(f"Classification Macro F1 (dev): {macro_f1:.4f}")
+            from sklearn.metrics import classification_report
+
+            report = classification_report(
+                y_true_clf, y_pred_clf, digits=4, zero_division=0
+            )
+            click.echo(report)
+            mlflow.log_metric("macro_f1", float(macro_f1))
+            mlflow.log_text(report, "classification_report.txt")
+        else:
+            click.echo("No classification labels for eval.")
+
+        if y_true_reg:
+            rmse = _compute_rmse(np.array(y_true_reg), np.array(y_pred_reg))
+            click.echo(f"Regression RMSE (dev): {rmse:.4f}")
+            mlflow.log_metric("rmse", float(rmse))
+        else:
+            click.echo("No regression labels for eval.")
+
+        click.echo("Done.")
+        # NOTE: no model to log or register — this baseline performs no
+        # training, only few-shot inference.
 
 
 if __name__ == "__main__":
