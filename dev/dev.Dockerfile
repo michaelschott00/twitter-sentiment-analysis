@@ -1,8 +1,18 @@
-FROM python:3.12-slim
+FROM python:3.12.14-slim
 
 WORKDIR /workspace
 
 ENV HOME=/home/agent
+
+# Pinned tool versions (single source of truth for reproducibility).
+# Bump these ARGs to upgrade; cache filenames below include the version so a
+# version bump cannot reuse a stale BuildKit cache artifact.
+ARG OPENCODE_VERSION=1.18.30
+ARG TFLINT_VERSION=0.64.0
+ARG TERRAFORM_VERSION=1.16.1
+ARG AZURE_CLI_VERSION=2.90.0
+ARG AZCOPY_VERSION=10.32.7
+ARG ML_EXTENSION_VERSION=2.44.1
 
 # BuildKit cache mounts (--mount=type=cache) keep downloaded artifacts across
 # rebuilds, so an invalidated layer does not force re-downloading:
@@ -22,11 +32,11 @@ RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt,sharing=locked \
 # Install opencode (cache the final binary; the installer otherwise re-downloads
 # the release tarball on every invalidated rebuild)
 RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
-    { [ -x /var/cache/downloads/opencode ] \
-        || { curl -fsSL https://opencode.ai/install | bash \
-             && install -m 755 $HOME/.opencode/bin/opencode /var/cache/downloads/opencode; }; } \
+    { [ -x /var/cache/downloads/opencode-${OPENCODE_VERSION} ] \
+        || { curl -fsSL https://opencode.ai/install | bash -s -- --version ${OPENCODE_VERSION} --no-modify-path \
+             && install -m 755 $HOME/.opencode/bin/opencode /var/cache/downloads/opencode-${OPENCODE_VERSION}; }; } \
     && install -d $HOME/.opencode/bin \
-    && install -m 755 /var/cache/downloads/opencode $HOME/.opencode/bin/opencode \
+    && install -m 755 /var/cache/downloads/opencode-${OPENCODE_VERSION} $HOME/.opencode/bin/opencode \
     && ln -sf $HOME/.opencode/bin/opencode /usr/local/bin/opencode \
     && mkdir -p $HOME/.config/opencode $HOME/.local/share/opencode $HOME/.local/state/opencode \
     && $HOME/.opencode/bin/opencode completion >> $HOME/.bashrc
@@ -48,8 +58,8 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 # Install tflint
 ENV TFLINT_PLUGIN_DIR=/usr/local/share/tflint/plugins
 RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
-    { [ -f /var/cache/downloads/tflint.zip ] || curl -fsSL https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip -o /var/cache/downloads/tflint.zip; } \
-    && unzip -o /var/cache/downloads/tflint.zip -d /var/cache/downloads \
+    { [ -f /var/cache/downloads/tflint-${TFLINT_VERSION}.zip ] || curl -fsSL https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip -o /var/cache/downloads/tflint-${TFLINT_VERSION}.zip; } \
+    && unzip -o /var/cache/downloads/tflint-${TFLINT_VERSION}.zip -d /var/cache/downloads \
     && install -m 755 /var/cache/downloads/tflint /usr/local/bin/tflint \
     && mkdir -p $TFLINT_PLUGIN_DIR \
     && chmod 1777 $TFLINT_PLUGIN_DIR
@@ -67,20 +77,19 @@ RUN --mount=type=cache,id=tflint-plugins-dev,target=/var/cache/tflint-plugins,sh
 
 # Install terraform
 RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
-    { [ -f /var/cache/downloads/terraform.zip ] || curl -fsSL https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip -o /var/cache/downloads/terraform.zip; } \
-    && unzip -o /var/cache/downloads/terraform.zip -d /var/cache/downloads \
+    { [ -f /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip ] || curl -fsSL https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip -o /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip; } \
+    && unzip -o /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip -d /var/cache/downloads \
     && install -m 755 /var/cache/downloads/terraform /usr/local/bin/terraform
 
-# Install azure-cli (wheels cached in the pip cache mount)
+# Install azure-cli (wheels cached in the pip cache mount; pinned, no `az upgrade`)
 RUN --mount=type=cache,id=pip-dev,target=$HOME/.cache/pip,sharing=locked \
-    pip install --break-system-packages azure-cli \
-    && az upgrade --yes
+    pip install --break-system-packages azure-cli==${AZURE_CLI_VERSION}
 
 # Install azcopy
 RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
-    { [ -f /var/cache/downloads/azcopy.tar.gz ] || curl -fsSL https://aka.ms/downloadazcopy-v10-linux -o /var/cache/downloads/azcopy.tar.gz; } \
-    && tar -xzf /var/cache/downloads/azcopy.tar.gz -C /var/cache/downloads \
-    && install -m 755 /var/cache/downloads/azcopy_linux_amd64_*/azcopy /usr/local/bin/azcopy
+    { [ -f /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz ] || curl -fsSL https://github.com/Azure/azure-storage-azcopy/releases/download/v${AZCOPY_VERSION}/azcopy_linux_amd64_${AZCOPY_VERSION}.tar.gz -o /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz; } \
+    && tar -xzf /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz -C /var/cache/downloads \
+    && install -m 755 /var/cache/downloads/azcopy_linux_amd64_${AZCOPY_VERSION}/azcopy /usr/local/bin/azcopy
 
 # Create unprivileged agent user
 RUN useradd -m -u 1000 agent
@@ -88,7 +97,7 @@ RUN chown -R agent:agent $HOME
 USER agent
 
 # Install the Azure ML extension (as the runtime user, so `az ml` is found)
-RUN az extension add --name ml --yes
+RUN az extension add --name ml --version ${ML_EXTENSION_VERSION} --yes
 
 # Override python entrypoint
 ENTRYPOINT ["/bin/bash"]

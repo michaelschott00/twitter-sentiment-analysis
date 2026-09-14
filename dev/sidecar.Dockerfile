@@ -1,6 +1,13 @@
-FROM python:3.12-slim
+FROM python:3.12.14-slim
 
 WORKDIR /workspace
+
+# Pinned tool versions (single source of truth for reproducibility).
+ARG TERRAFORM_VERSION=1.16.1
+ARG AZURE_CLI_VERSION=2.90.0
+ARG MCP_VERSION=2.1.1
+ARG AZCOPY_VERSION=10.32.7
+ARG ML_EXTENSION_VERSION=2.44.1
 
 # BuildKit cache mounts keep downloaded artifacts across rebuilds (see
 # dev/dev.Dockerfile for the rationale). Distinct cache ids so the sidecar never
@@ -14,20 +21,19 @@ RUN --mount=type=cache,id=apt-sidecar,target=/var/cache/apt,sharing=locked \
 
 # Install terraform
 RUN --mount=type=cache,id=downloads-sidecar,target=/var/cache/downloads,sharing=locked \
-    { [ -f /var/cache/downloads/terraform.zip ] || curl -fsSL https://releases.hashicorp.com/terraform/1.16.1/terraform_1.16.1_linux_amd64.zip -o /var/cache/downloads/terraform.zip; } \
-    && unzip -o /var/cache/downloads/terraform.zip -d /var/cache/downloads \
+    { [ -f /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip ] || curl -fsSL https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip -o /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip; } \
+    && unzip -o /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip -d /var/cache/downloads \
     && install -m 755 /var/cache/downloads/terraform /usr/local/bin/terraform
 
-# Install azure-cli + mcp (wheels cached in the pip cache mount)
+# Install azure-cli + mcp (wheels cached in the pip cache mount; pinned, no `az upgrade`)
 RUN --mount=type=cache,id=pip-sidecar,target=/root/.cache/pip,sharing=locked \
-    pip install --break-system-packages azure-cli "mcp[cli]" \
-    && az upgrade --yes
+    pip install --break-system-packages azure-cli==${AZURE_CLI_VERSION} "mcp[cli]==${MCP_VERSION}"
 
 # Install azcopy
 RUN --mount=type=cache,id=downloads-sidecar,target=/var/cache/downloads,sharing=locked \
-    { [ -f /var/cache/downloads/azcopy.tar.gz ] || curl -fsSL https://aka.ms/downloadazcopy-v10-linux -o /var/cache/downloads/azcopy.tar.gz; } \
-    && tar -xzf /var/cache/downloads/azcopy.tar.gz -C /var/cache/downloads \
-    && install -m 755 /var/cache/downloads/azcopy_linux_amd64_*/azcopy /usr/local/bin/azcopy
+    { [ -f /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz ] || curl -fsSL https://github.com/Azure/azure-storage-azcopy/releases/download/v${AZCOPY_VERSION}/azcopy_linux_amd64_${AZCOPY_VERSION}.tar.gz -o /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz; } \
+    && tar -xzf /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz -C /var/cache/downloads \
+    && install -m 755 /var/cache/downloads/azcopy_linux_amd64_${AZCOPY_VERSION}/azcopy /usr/local/bin/azcopy
 
 # Add non-privileged user
 RUN useradd -m -u 1000 agent
@@ -47,7 +53,7 @@ RUN chown -R agent:agent /home/agent
 USER agent
 
 # Install the Azure ML extension (as the runtime user, so `az ml` is found)
-RUN az extension add --name ml --yes
+RUN az extension add --name ml --version ${ML_EXTENSION_VERSION} --yes
 
 # Setup aliases
 COPY <<EOF /home/agent/.bashrc
