@@ -1,8 +1,25 @@
-"""LLM baseline for Twitter sentiment analysis via the regular OpenAI API.
+"""LLM baseline for Twitter sentiment analysis via the OpenAI Batch API.
 
 Uses few-shot prompting to obtain both classification (sentiment) and
-regression (valence) in a single prompt. Supports token estimation with
-tiktoken and dry-run mode when credentials are missing.
+regression (valence) in a single prompt. Requests are sent asynchronously
+through the `Batch API <https://developers.openai.com/api/docs/guides/batch>`_
+(50% lower cost, separate higher rate limits, 24h turnaround) instead of
+one synchronous ``chat.completions.create`` call per tweet.
+
+Workflow (live mode):
+
+1. Build one ``/v1/chat/completions`` request per tweet and write them as
+   JSONL (each line: ``custom_id``, ``method``, ``url``, ``body``).
+2. Upload the JSONL with ``purpose="batch"`` via the Files API.
+3. Create a batch (``endpoint="/v1/chat/completions"``,
+   ``completion_window="24h"``).
+4. Poll ``batches.retrieve`` until the batch reaches a terminal status
+   (or exit early with ``--no-wait`` and resume later with ``--batch-id``).
+5. Download the output JSONL via ``files.content(output_file_id)``, map each
+   line back to its tweet with ``custom_id``, parse, evaluate and log.
+
+Supports token estimation with tiktoken and dry-run mode (prints the batch
+request lines instead of calling the API) when credentials are missing.
 
 MLflow tracking:
   - Dry-run / --estimate-tokens paths stay fully local (no MLflow calls).
@@ -15,13 +32,15 @@ MLflow tracking:
     picked up automatically by ``DefaultAzureCredential`` through the
     ``azureml-mlflow`` plugin — no explicit login code needed.
   - No model is logged or registered (no training); params, metrics and
-    artifacts (predictions, LLM responses, report, prompts) are tracked.
+    artifacts (predictions, LLM responses, report, prompts, batch
+    input/manifest/output) are tracked.
 """
 
 import json
 import os
 import re
 import tempfile
+import time
 
 import click
 import numpy as np
@@ -34,7 +53,6 @@ except ImportError:
     openai = None  # type: ignore[assignment]
 
 from sklearn.metrics import f1_score, mean_squared_error
-from tqdm import tqdm
 
 try:
     from sklearn.metrics import root_mean_squared_error
@@ -50,6 +68,11 @@ DEFAULT_ENCODING = "o200k_base"
 
 MLFLOW_EXPERIMENT_NAME = "twitter-sentiment"
 MLFLOW_RUN_NAME = "llm-baseline"
+
+BATCH_ENDPOINT = "/v1/chat/completions"
+BATCH_METHOD = "POST"
+DEFAULT_COMPLETION_WINDOW = "24h"
+TERMINAL_BATCH_STATUSES = {"completed", "failed", "expired", "cancelled"}
 
 SYSTEM_PROMPT = (
     "You are an expert sentiment analysis model for Twitter data, "
@@ -326,27 +349,276 @@ def _compute_rmse(y_true, y_pred) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def call_llm(client, model: str, messages: list[dict]) -> str:
-    """Call chat completions and return content string."""
-    # Try with json response_format for models that support it
-    kwargs = {
+# ---------------------------------------------------------------------------
+# Batch API helpers
+# ---------------------------------------------------------------------------
+
+
+def build_chat_body(model: str, messages: list[dict]) -> dict:
+    """Build the ``body`` payload for one ``/v1/chat/completions`` request."""
+    body: dict = {
         "model": model,
         "messages": messages,
+        "response_format": {"type": "json_object"},
     }
-    # Most regular OpenAI chat models support json_object response_format
-    if "gpt-4o" in model or "gpt-5" in model or "gpt-4" in model or "gpt-3.5" in model:
-        kwargs["response_format"] = {"type": "json_object"}
+    return body
 
+
+def build_batch_request_line(custom_id: str, model: str, messages: list[dict]) -> dict:
+    """Build one JSONL line for the Batch input file."""
+    return {
+        "custom_id": custom_id,
+        "method": BATCH_METHOD,
+        "url": BATCH_ENDPOINT,
+        "body": build_chat_body(model, messages),
+    }
+
+
+def custom_id_for_row(position: int) -> str:
+    """Return a unique ``custom_id`` for the tweet at ``position``."""
+    return f"tweet-{position}"
+
+
+def write_batch_input_file(
+    df: pd.DataFrame,
+    few_shot_examples: list[dict],
+    model: str,
+    output_path: str,
+    system_prompt: str = SYSTEM_PROMPT,
+) -> dict:
+    """Write one batch request per row of ``df`` as JSONL.
+
+    Returns a manifest mapping ``custom_id`` -> row metadata (original index,
+    ``id`` column when present, tweet text and true labels when present) so
+    batch results can be joined back without re-reading the CSV.
+    """
+    manifest: dict = {}
+    with open(output_path, "w", encoding="utf-8") as f:
+        for position, (idx, row) in enumerate(df.iterrows()):
+            tweet = str(row["text"])
+            messages = build_messages(tweet, few_shot_examples, system_prompt)
+            custom_id = custom_id_for_row(position)
+            line = build_batch_request_line(custom_id, model, messages)
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            entry: dict = {
+                "position": position,
+                "index": int(idx) if isinstance(idx, (int, np.integer)) else str(idx),
+                "id": row.get("id", idx),
+                "text": tweet,
+            }
+            # Convert numpy/pandas scalars to plain python types for JSON.
+            if "sentiment" in row and pd.notna(row["sentiment"]):
+                entry["true_sentiment"] = str(row["sentiment"])
+            if "score_compound" in row and pd.notna(row["score_compound"]):
+                entry["true_score"] = float(row["score_compound"])
+            manifest[custom_id] = entry
+            # JSON-serializability guard for the ``id`` field.
+            if isinstance(entry["id"], (np.integer,)):
+                entry["id"] = int(entry["id"])
+            elif isinstance(entry["id"], (np.floating,)):
+                entry["id"] = float(entry["id"])
+    return manifest
+
+
+def save_manifest(manifest: dict, path: str) -> None:
+    """Persist the ``custom_id`` manifest as JSON."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+
+def load_manifest(path: str) -> dict:
+    """Load a ``custom_id`` manifest written by :func:`save_manifest`."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Manifest must be a JSON object: {path}")
+    return data
+
+
+def _batch_field(batch, name: str, default=None):
+    """Read ``name`` from a Batch object (SDK model) or plain dict."""
+    if isinstance(batch, dict):
+        return batch.get(name, default)
+    return getattr(batch, name, default)
+
+
+def submit_batch(
+    client,
+    input_path: str,
+    completion_window: str = DEFAULT_COMPLETION_WINDOW,
+    metadata: dict | None = None,
+):
+    """Upload ``input_path`` and create a Batch; return the Batch object."""
+    with open(input_path, "rb") as fh:
+        batch_input_file = client.files.create(file=fh, purpose="batch")
+    input_file_id = _batch_field(batch_input_file, "id")
+    click.echo(f"Uploaded batch input file: {input_file_id}")
+    batch = client.batches.create(
+        input_file_id=input_file_id,
+        endpoint=BATCH_ENDPOINT,
+        completion_window=completion_window,
+        metadata=metadata or {"description": "twitter llm-baseline"},
+    )
+    return batch
+
+
+def poll_batch(
+    client,
+    batch_id: str,
+    poll_interval: float = 60.0,
+    timeout: float = 86400.0,
+):
+    """Poll ``batches.retrieve`` until the batch reaches a terminal status."""
+    started = time.monotonic()
+    while True:
+        batch = client.batches.retrieve(batch_id)
+        status = _batch_field(batch, "status")
+        counts = _batch_field(batch, "request_counts", {})
+        if not isinstance(counts, dict):
+            try:
+                counts = counts.model_dump()  # pydantic model
+            except Exception:  # noqa: BLE001
+                counts = {}
+        click.echo(f"Batch {batch_id} status={status} counts={counts}")
+        if status in TERMINAL_BATCH_STATUSES:
+            return batch
+        if timeout > 0 and (time.monotonic() - started) > timeout:
+            raise TimeoutError(
+                f"Timed out waiting for batch {batch_id} after {timeout:.0f}s. "
+                f"Resume later with --batch-id {batch_id}."
+            )
+        time.sleep(max(poll_interval, 1.0))
+
+
+def _file_text(client, file_id: str) -> str:
+    """Download a file via the Files API and return its text content."""
+    resp = client.files.content(file_id)
+    for attr in ("text",):
+        val = getattr(resp, attr, None)
+        if isinstance(val, str):
+            return val
+    if hasattr(resp, "read"):
+        data = resp.read()
+        return data.decode("utf-8") if isinstance(data, bytes) else str(data)
+    content = getattr(resp, "content", None)
+    if isinstance(content, bytes):
+        return content.decode("utf-8")
+    if isinstance(content, str):
+        return content
+    raise ValueError(f"Could not read content of file {file_id}: {type(resp)}")
+
+
+def download_batch_output(client, output_file_id: str, dest_path: str) -> list[dict]:
+    """Download the batch output JSONL and return parsed lines.
+
+    Also writes the raw JSONL to ``dest_path`` for provenance / resume.
+    """
+    text = _file_text(client, output_file_id)
+    with open(dest_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    lines: list[dict] = []
+    for raw in text.splitlines():
+        raw = raw.strip()
+        if raw:
+            lines.append(json.loads(raw))
+    return lines
+
+
+def extract_content_from_result(result: dict) -> str:
+    """Extract the assistant message content from one batch output line.
+
+    Raises ``ValueError`` for failed / errored requests (including expired).
+    """
+    custom_id = result.get("custom_id", "?")
+    error = result.get("error")
+    response = result.get("response") or {}
+    if error is not None:
+        raise ValueError(f"Request {custom_id} failed: {error}")
+    status_code = response.get("status_code")
+    if status_code != 200:
+        raise ValueError(
+            f"Request {custom_id} bad status {status_code}: {response!r}"[:500]
+        )
+    body = response.get("body") or {}
     try:
-        resp = client.chat.completions.create(**kwargs)
-    except Exception:
-        # retry without response_format if it failed
-        if "response_format" in kwargs:
-            kwargs.pop("response_format")
-            resp = client.chat.completions.create(**kwargs)
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise ValueError(
+            f"Request {custom_id} has no chat content: {body!r}"[:500]
+        ) from e
+
+
+def collect_batch_predictions(
+    manifest: dict, output_lines: list[dict]
+) -> tuple[list, list, list, list, list, list, int]:
+    """Join batch output lines back to tweets and parse predictions.
+
+    Returns ``(y_true_clf, y_pred_clf, y_true_reg, y_pred_reg, raw_outputs,
+    llm_responses, num_errors)``. Failed requests and unparsable outputs
+    fall back to ``("neutral", 0.0)`` and count towards ``num_errors``.
+    Missing ``custom_id`` entries (e.g. expired requests only present in the
+    error file) are also recorded as errors when present in the manifest.
+    """
+    by_id = {line.get("custom_id"): line for line in output_lines}
+    y_true_clf: list[int] = []
+    y_pred_clf: list[int] = []
+    y_true_reg: list[float] = []
+    y_pred_reg: list[float] = []
+    raw_outputs: list[dict] = []
+    llm_responses: list[dict] = []
+    num_errors = 0
+
+    for custom_id, entry in manifest.items():
+        line = by_id.get(custom_id)
+        if line is None:
+            content: str | None = None
+            sentiment, valence = "neutral", 0.0
+            num_errors += 1
+            click.echo(
+                f"{custom_id} missing from batch output — using fallback.", err=True
+            )
         else:
-            raise
-    return resp.choices[0].message.content  # type: ignore[union-attr]
+            try:
+                content = extract_content_from_result(line)
+                sentiment, valence = parse_model_output(content)
+            except Exception as e:  # noqa: BLE001
+                click.echo(f"{custom_id} result error: {e}", err=True)
+                sentiment, valence = "neutral", 0.0
+                content = f"ERROR: {e}"
+                num_errors += 1
+
+        if "true_sentiment" in entry:
+            true_sent = str(entry["true_sentiment"])
+            if true_sent.isdigit() or (true_sent.lstrip("-").isdigit()):
+                true_sent_id = int(true_sent)
+            else:
+                true_sent_id = LABEL_CODING.get(true_sent, 1)
+            y_true_clf.append(true_sent_id)
+            y_pred_clf.append(LABEL_CODING[sentiment])
+        if "true_score" in entry:
+            y_true_reg.append(float(entry["true_score"]))
+            y_pred_reg.append(float(valence))
+
+        raw_outputs.append(
+            {
+                "id": entry.get("id"),
+                "text": entry.get("text", ""),
+                "pred_sentiment": sentiment,
+                "pred_valence": valence,
+                "raw": content,
+            }
+        )
+        llm_responses.append({"id": entry.get("id"), "llm_response": content})
+
+    return (
+        y_true_clf,
+        y_pred_clf,
+        y_true_reg,
+        y_pred_reg,
+        raw_outputs,
+        llm_responses,
+        num_errors,
+    )
 
 
 @click.command()
@@ -382,7 +654,49 @@ def call_llm(client, model: str, messages: list[dict]) -> str:
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Dry run: print prompts instead of calling API",
+    help="Dry run: print batch request lines instead of calling API",
+)
+@click.option(
+    "--completion-window",
+    default=DEFAULT_COMPLETION_WINDOW,
+    show_default=True,
+    help="Batch completion window (Batch API currently only supports 24h)",
+)
+@click.option(
+    "--poll-interval",
+    default=60.0,
+    type=float,
+    show_default=True,
+    help="Seconds between batch status polls",
+)
+@click.option(
+    "--poll-timeout",
+    default=86400.0,
+    type=float,
+    show_default=True,
+    help="Max seconds to wait for batch completion (0 = submit only)",
+)
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    help="Submit the batch and exit without waiting for results",
+)
+@click.option(
+    "--batch-id",
+    default=None,
+    help="Resume: fetch results for an existing batch instead of submitting",
+)
+@click.option(
+    "--manifest-path",
+    default=None,
+    type=click.Path(exists=False),
+    help="Path to manifest.json for --batch-id resume (defaults to <workdir>/manifest.json)",
+)
+@click.option(
+    "--workdir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Directory to persist batch_input.jsonl / manifest.json / batch_output.jsonl for resume",
 )
 def main(
     dev_path,
@@ -394,29 +708,46 @@ def main(
     limit,
     estimate_tokens,
     dry_run,
+    completion_window,
+    poll_interval,
+    poll_timeout,
+    no_wait,
+    batch_id,
+    manifest_path,
+    workdir,
 ):
-    """LLM baseline: few-shot sentiment + valence via OpenAI API on dev set."""
+    """LLM baseline: few-shot sentiment + valence via OpenAI Batch API on dev set."""
     # --estimate-tokens path
     if estimate_tokens:
         estimate_token_counts(dev_path, encoding)
         if not dry_run:
             return
 
-    # Load dev data
-    if not os.path.exists(dev_path):
-        raise click.ClickException(f"Dev file not found: {dev_path}")
-    df_dev = pd.read_csv(dev_path)
-    if "text" not in df_dev.columns:
-        raise click.ClickException("Dev CSV missing 'text' column")
+    # Resume mode needs the manifest that maps custom_id -> tweet.
+    if batch_id is not None and manifest_path is None and workdir is not None:
+        manifest_path = os.path.join(workdir, "manifest.json")
 
-    # Token stats for logging (always show briefly)
+    # Load dev data (not needed when resuming purely from a manifest, but
+    # still useful for logging — only require it for the submit path).
+    df_dev: pd.DataFrame | None = None
+    dev_counts = None
     enc = get_encoding(encoding)
-    dev_counts = df_dev["text"].astype(str).apply(lambda x: count_tokens(x, enc))
-    click.echo(
-        f"Dev tokens ({encoding}): total={int(dev_counts.sum())} "
-        f"avg={dev_counts.mean():.1f} max={int(dev_counts.max())} "
-        f"min={int(dev_counts.min())}"
-    )
+    if batch_id is None:
+        if not os.path.exists(dev_path):
+            raise click.ClickException(f"Dev file not found: {dev_path}")
+        df_dev = pd.read_csv(dev_path)
+        if "text" not in df_dev.columns:
+            raise click.ClickException("Dev CSV missing 'text' column")
+
+        # Token stats for logging (always show briefly)
+        dev_counts = df_dev["text"].astype(str).apply(lambda x: count_tokens(x, enc))
+        click.echo(
+            f"Dev tokens ({encoding}): total={int(dev_counts.sum())} "
+            f"avg={dev_counts.mean():.1f} max={int(dev_counts.max())} "
+            f"min={int(dev_counts.min())}"
+        )
+        if limit is not None:
+            df_dev = df_dev.iloc[:limit]
 
     # Few-shot examples
     try:
@@ -433,46 +764,62 @@ def main(
         preview = ex["text"][:100].replace("\n", " ")
         click.echo(f"  {i}. [{ex['sentiment']}, {ex['valence']:.3f}] {preview}...")
 
-    # Dry-run handling
+    # Dry-run handling (preview the batch input, no client needed)
+    if dry_run and batch_id is None:
+        click.echo("\n--- DRY RUN: batch request preview (no API call) ---")
+        assert df_dev is not None
+        n_show = limit if limit is not None else 3
+        n_show = min(n_show, len(df_dev))
+        for pos in range(n_show):
+            tweet = str(df_dev.iloc[pos]["text"])
+            messages = build_messages(tweet, few_shot, SYSTEM_PROMPT)
+            line = build_batch_request_line(custom_id_for_row(pos), model, messages)
+            prompt_tokens = count_tokens(" ".join(m["content"] for m in messages), enc)
+            click.echo(
+                f"\nLine {pos + 1}/{n_show} custom_id={line['custom_id']} "
+                f"(prompt ~{prompt_tokens} tokens):"
+            )
+            click.echo(json.dumps(line, indent=2, ensure_ascii=False)[:3000])
+            if len(json.dumps(line)) > 3000:
+                click.echo("... (truncated)")
+        click.echo(
+            "\nBatch API: 50% lower cost vs sync API, separate higher rate "
+            "limits, 24h turnaround. Submit with live mode; use --no-wait to "
+            "submit only and --batch-id to fetch results later."
+        )
+        click.echo(f"\nDry run done. Would submit {len(df_dev)} tweets as one batch.")
+        click.echo("Set OPENAI_API_KEY to submit live batches.")
+        return
+
     client = None
-    if not dry_run:
+    if batch_id is None:
         client = get_openai_client(base_url=base_url)
         if client is None:
             click.echo(
                 "No OpenAI credentials found (OPENAI_API_KEY). "
-                "Switching to dry-run mode (print prompts instead of calling API).",
+                "Switching to dry-run mode (print batch lines instead of calling API).",
                 err=True,
             )
-            dry_run = True
-
-    if dry_run:
-        click.echo("\n--- DRY RUN: prompt examples (no API call) ---")
-        n_show = limit if limit is not None else 3
-        n_show = min(n_show, len(df_dev))
-        for idx in range(n_show):
-            tweet = str(df_dev.iloc[idx]["text"])
-            messages = build_messages(tweet, few_shot, SYSTEM_PROMPT)
-            # token estimate for full prompt
-            prompt_text = " ".join(m["content"] for m in messages)
-            prompt_tokens = count_tokens(prompt_text, enc)
-            click.echo(
-                f"\nExample {idx + 1}/{n_show} (prompt ~{prompt_tokens} tokens):"
+            # Fall through to batch-line preview without submitting.
+            assert df_dev is not None
+            n_show = limit if limit is not None else 3
+            n_show = min(n_show, len(df_dev))
+            for pos in range(n_show):
+                tweet = str(df_dev.iloc[pos]["text"])
+                messages = build_messages(tweet, few_shot, SYSTEM_PROMPT)
+                line = build_batch_request_line(custom_id_for_row(pos), model, messages)
+                click.echo(json.dumps(line, ensure_ascii=False)[:1000])
+            return
+    else:
+        # Resume path still needs a client to fetch results.
+        client = get_openai_client(base_url=base_url)
+        if client is None:
+            raise click.ClickException(
+                "OPENAI_API_KEY is required to fetch batch results."
             )
-            click.echo(json.dumps(messages, indent=2, ensure_ascii=False)[:3000])
-            if len(json.dumps(messages)) > 3000:
-                click.echo("... (truncated)")
-            # show expected parsing
-            click.echo(
-                'Expected output JSON: {"sentiment": "positive|neutral|negative", "valence": 0.0}'
-            )
-        click.echo(
-            f"\nDry run done. Would evaluate {len(df_dev) if limit is None else min(limit, len(df_dev))} tweets live."
-        )
-        click.echo("Set OPENAI_API_KEY to run live calls.")
-        return
+    assert client is not None
 
     # Live mode (MLflow tracking enabled; dry-run above stays fully local)
-    assert client is not None
     try:
         import mlflow
     except ImportError as e:
@@ -494,122 +841,219 @@ def main(
                 or os.getenv("OPENAI_BASE_URL")
                 or os.getenv("OPENAI_API_BASE")
                 or "",
+                "endpoint": BATCH_ENDPOINT,
+                "completion_window": completion_window,
+                "poll_interval": poll_interval,
+                "poll_timeout": poll_timeout,
+                "no_wait": bool(no_wait),
             }
         )
-        mlflow.set_tags({"baseline": "llm", "model": model})
+        mlflow.set_tags({"baseline": "llm", "model": model, "api": "batch"})
         mlflow.log_text(SYSTEM_PROMPT, "system_prompt.txt")
         mlflow.log_text(
             json.dumps(few_shot, indent=2, ensure_ascii=False),
             "few_shot_examples.json",
         )
-        mlflow.log_params(
-            {
-                "dev_rows_total": len(df_dev),
-                "dev_total_tokens": int(dev_counts.sum()),
-                "dev_avg_tokens": float(dev_counts.mean()),
-                "system_prompt_tokens": count_tokens(SYSTEM_PROMPT, enc),
-            }
-        )
-
-        click.echo(
-            f"\nCalling model {model} for {len(df_dev) if limit is None else limit} tweets ..."
-        )
-        if limit is not None:
-            df_dev = df_dev.iloc[:limit]
-
-        y_true_clf: list[int] = []
-        y_pred_clf: list[int] = []
-        y_true_reg: list[float] = []
-        y_pred_reg: list[float] = []
-        raw_outputs: list[dict] = []
-        llm_responses: list[dict] = []
-        num_errors = 0
-
-        for idx, row in tqdm(df_dev.iterrows(), total=len(df_dev), desc="LLM eval"):
-            tweet = str(row["text"])
-            messages = build_messages(tweet, few_shot, SYSTEM_PROMPT)
-            try:
-                content = call_llm(client, model, messages)
-                sentiment, valence = parse_model_output(content)
-            except Exception as e:  # noqa: BLE001
-                click.echo(f"Row {idx} API/parse error: {e}", err=True)
-                # fallback to neutral 0
-                sentiment, valence = "neutral", 0.0
-                content = f"ERROR: {e}"
-                num_errors += 1
-
-            # true labels
-            if "sentiment" in row:
-                true_sent = str(row["sentiment"])
-                # handle encoded ints
-                if true_sent.isdigit() or (true_sent.lstrip("-").isdigit()):
-                    true_sent_id = int(true_sent)
-                else:
-                    true_sent_id = LABEL_CODING.get(true_sent, 1)
-                pred_id = LABEL_CODING[sentiment]
-                y_true_clf.append(true_sent_id)
-                y_pred_clf.append(pred_id)
-            if "score_compound" in row:
-                y_true_reg.append(float(row["score_compound"]))
-                y_pred_reg.append(float(valence))
-
-            raw_outputs.append(
+        if dev_counts is not None:
+            mlflow.log_params(
                 {
-                    "id": row.get("id", idx),
-                    "text": tweet,
-                    "pred_sentiment": sentiment,
-                    "pred_valence": valence,
-                    "raw": content,
-                }
-            )
-            llm_responses.append(
-                {
-                    "id": row.get("id", idx),
-                    "llm_response": content,
+                    "dev_rows_total": len(df_dev) if df_dev is not None else -1,
+                    "dev_total_tokens": int(dev_counts.sum()),
+                    "dev_avg_tokens": float(dev_counts.mean()),
+                    "system_prompt_tokens": count_tokens(SYSTEM_PROMPT, enc),
                 }
             )
 
-        # Log predictions and raw LLM responses to MLflow only (no local copy).
-        with tempfile.TemporaryDirectory() as tmpdir:
-            llm_log_path = os.path.join(tmpdir, "llm_responses.csv")
-            pd.DataFrame(llm_responses, columns=["id", "llm_response"]).to_csv(
-                llm_log_path, index=False
-            )
-            mlflow.log_artifact(llm_log_path)
-
-            predictions_path = os.path.join(tmpdir, "predictions.csv")
-            pd.DataFrame(raw_outputs).to_csv(predictions_path, index=False)
-            mlflow.log_artifact(predictions_path)
-        click.echo("Logged predictions and LLM responses to MLflow.")
-
-        mlflow.log_metric("num_rows", float(len(df_dev)))
-        mlflow.log_metric("num_errors", float(num_errors))
-
-        # Evaluate
-        if y_true_clf:
-            macro_f1 = f1_score(y_true_clf, y_pred_clf, average="macro")
-            click.echo(f"Classification Macro F1 (dev): {macro_f1:.4f}")
-            from sklearn.metrics import classification_report
-
-            report = classification_report(
-                y_true_clf, y_pred_clf, digits=4, zero_division=0
-            )
-            click.echo(report)
-            mlflow.log_metric("macro_f1", float(macro_f1))
-            mlflow.log_text(report, "classification_report.txt")
+        tmpdir_ctx: tempfile.TemporaryDirectory | None = None
+        persist_dir = workdir
+        if persist_dir is not None:
+            os.makedirs(persist_dir, exist_ok=True)
+            batch_input_path = os.path.join(persist_dir, "batch_input.jsonl")
+            local_manifest_path = os.path.join(persist_dir, "manifest.json")
+            batch_output_path = os.path.join(persist_dir, "batch_output.jsonl")
         else:
-            click.echo("No classification labels for eval.")
+            tmpdir_ctx = tempfile.TemporaryDirectory()
+            batch_input_path = os.path.join(tmpdir_ctx.name, "batch_input.jsonl")
+            local_manifest_path = os.path.join(tmpdir_ctx.name, "manifest.json")
+            batch_output_path = os.path.join(tmpdir_ctx.name, "batch_output.jsonl")
 
-        if y_true_reg:
-            rmse = _compute_rmse(np.array(y_true_reg), np.array(y_pred_reg))
-            click.echo(f"Regression RMSE (dev): {rmse:.4f}")
-            mlflow.log_metric("rmse", float(rmse))
-        else:
-            click.echo("No regression labels for eval.")
+        try:
+            manifest: dict
+            if batch_id is None:
+                assert df_dev is not None
+                n_rows = len(df_dev)
+                if n_rows == 0:
+                    raise click.ClickException("No dev rows to submit.")
+                if n_rows > 50000:
+                    raise click.ClickException(
+                        f"Batch API supports at most 50,000 requests per batch "
+                        f"(got {n_rows}). Use --limit to split the workload."
+                    )
+                click.echo(
+                    f"\nBuilding batch input for {n_rows} tweets "
+                    f"(endpoint={BATCH_ENDPOINT}, model={model}) ..."
+                )
+                manifest = write_batch_input_file(
+                    df_dev, few_shot, model, batch_input_path
+                )
+                save_manifest(manifest, local_manifest_path)
+                # mlflow.log_artifact(batch_input_path)
+                mlflow.log_artifact(local_manifest_path)
+                mlflow.log_param("num_requests", n_rows)
 
-        click.echo("Done.")
-        # NOTE: no model to log or register — this baseline performs no
-        # training, only few-shot inference.
+                batch = submit_batch(client, batch_input_path, completion_window)
+                batch_id = _batch_field(batch, "id")
+                input_file_id = _batch_field(batch, "input_file_id")
+                click.echo(f"Created batch {batch_id} (input_file={input_file_id}).")
+                mlflow.log_params(
+                    {"batch_id": batch_id or "", "input_file_id": input_file_id or ""}
+                )
+            else:
+                # Resume: load the manifest from --manifest-path / workdir.
+                resolved_manifest = manifest_path or local_manifest_path
+                if not resolved_manifest or not os.path.exists(resolved_manifest):
+                    raise click.ClickException(
+                        f"Manifest not found: {resolved_manifest}. "
+                        "Pass --manifest-path (or --workdir containing manifest.json) "
+                        "from the submit step so custom_ids can be mapped back."
+                    )
+                manifest = load_manifest(resolved_manifest)
+                click.echo(
+                    f"Resuming batch {batch_id} with {len(manifest)} requests "
+                    f"(manifest={resolved_manifest})."
+                )
+                mlflow.log_params({"batch_id": batch_id})
+                try:
+                    mlflow.log_artifact(resolved_manifest)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            submit_only = bool(no_wait) or (
+                poll_timeout is not None and poll_timeout <= 0
+            )
+            if submit_only:
+                click.echo(
+                    f"\nSubmitted batch {batch_id} (--no-wait). Fetch results later with:\n"
+                    f"  python -m twitter.baselines.llm_baseline "
+                    f"--batch-id {batch_id} --manifest-path {local_manifest_path}"
+                    + (f" --dev-path {dev_path}" if batch_id else "")
+                )
+                return
+
+            click.echo(
+                f"\nWaiting for batch {batch_id} (poll every {poll_interval}s) ..."
+            )
+            final_batch = poll_batch(
+                client, batch_id, poll_interval=poll_interval, timeout=poll_timeout
+            )
+            status = _batch_field(final_batch, "status")
+            output_file_id = _batch_field(final_batch, "output_file_id")
+            error_file_id = _batch_field(final_batch, "error_file_id")
+            click.echo(
+                f"Batch {batch_id} finished with status={status} "
+                f"output_file={output_file_id} error_file={error_file_id}."
+            )
+            mlflow.log_params(
+                {
+                    "batch_status": status or "",
+                    "output_file_id": output_file_id or "",
+                    "error_file_id": error_file_id or "",
+                }
+            )
+            request_counts = _batch_field(final_batch, "request_counts", {}) or {}
+            if not isinstance(request_counts, dict):
+                try:
+                    request_counts = request_counts.model_dump()
+                except Exception:  # noqa: BLE001
+                    request_counts = {}
+            for k, v in request_counts.items():
+                try:
+                    mlflow.log_metric(f"batch_{k}", float(v))
+                except Exception:  # noqa: BLE001
+                    pass
+
+            if status != "completed" and output_file_id is None:
+                raise click.ClickException(
+                    f"Batch {batch_id} ended with status={status} and no output file. "
+                    f"Inspect error_file={error_file_id} in the OpenAI dashboard."
+                )
+            if output_file_id is None:
+                raise click.ClickException(
+                    f"Batch {batch_id} has no output file (status={status})."
+                )
+
+            output_lines = download_batch_output(
+                client, output_file_id, batch_output_path
+            )
+            click.echo(f"Downloaded {len(output_lines)} batch result lines.")
+            mlflow.log_artifact(batch_output_path)
+
+            (
+                y_true_clf,
+                y_pred_clf,
+                y_true_reg,
+                y_pred_reg,
+                raw_outputs,
+                llm_responses,
+                num_errors,
+            ) = collect_batch_predictions(manifest, output_lines)
+
+            # Log predictions and raw LLM responses to MLflow only (no local copy
+            # beyond --workdir).
+            if persist_dir is not None:
+                predictions_path = os.path.join(persist_dir, "predictions.csv")
+                llm_log_path = os.path.join(persist_dir, "llm_responses.csv")
+                pd.DataFrame(raw_outputs).to_csv(predictions_path, index=False)
+                pd.DataFrame(llm_responses, columns=["id", "llm_response"]).to_csv(
+                    llm_log_path, index=False
+                )
+                mlflow.log_artifact(predictions_path)
+                mlflow.log_artifact(llm_log_path)
+            else:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    llm_log_path = os.path.join(tmpdir, "llm_responses.csv")
+                    pd.DataFrame(llm_responses, columns=["id", "llm_response"]).to_csv(
+                        llm_log_path, index=False
+                    )
+                    mlflow.log_artifact(llm_log_path)
+
+                    predictions_path = os.path.join(tmpdir, "predictions.csv")
+                    pd.DataFrame(raw_outputs).to_csv(predictions_path, index=False)
+                    mlflow.log_artifact(predictions_path)
+            click.echo("Logged predictions and LLM responses to MLflow.")
+
+            mlflow.log_metric("num_rows", float(len(manifest)))
+            mlflow.log_metric("num_output_lines", float(len(output_lines)))
+            mlflow.log_metric("num_errors", float(num_errors))
+
+            # Evaluate
+            if y_true_clf:
+                macro_f1 = f1_score(y_true_clf, y_pred_clf, average="macro")
+                click.echo(f"Classification Macro F1 (dev): {macro_f1:.4f}")
+                from sklearn.metrics import classification_report
+
+                report = classification_report(
+                    y_true_clf, y_pred_clf, digits=4, zero_division=0
+                )
+                click.echo(report)
+                mlflow.log_metric("macro_f1", float(macro_f1))
+                mlflow.log_text(report, "classification_report.txt")
+            else:
+                click.echo("No classification labels for eval.")
+
+            if y_true_reg:
+                rmse = _compute_rmse(np.array(y_true_reg), np.array(y_pred_reg))
+                click.echo(f"Regression RMSE (dev): {rmse:.4f}")
+                mlflow.log_metric("rmse", float(rmse))
+            else:
+                click.echo("No regression labels for eval.")
+
+            click.echo("Done.")
+            # NOTE: no model to log or register — this baseline performs no
+            # training, only few-shot inference.
+        finally:
+            if tmpdir_ctx is not None:
+                tmpdir_ctx.cleanup()
 
 
 if __name__ == "__main__":
