@@ -10,22 +10,31 @@ services:
       - ~/.local/share/opencode:/home/agent/.local/share/opencode
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
 
-  sidecar:
+  runpod-mcp:
     build:
       context: .
-      dockerfile: dev/sidecar.Dockerfile
+      dockerfile: dev/runpod-mcp.Dockerfile
     ports:
-      - 8000:8000
-    volumes:
-      - .:/workspace
-      - ${SSH_AUTH_SOCK}:/ssh-agent
+      - 8001:8001
+    env_file: ../.runpod.env
     environment:
-      - ARM_SUBSCRIPTION_ID=${ARM_SUBSCRIPTION_ID}
-      - ARM_TENANT_ID=${ARM_TENANT_ID}
-      - AZCOPY_AUTO_LOGIN_TYPE=SPN
-      - AZCOPY_TENANT_ID=${AZCOPY_TENANT_ID}
-      - AZCOPY_SPA_APPLICATION_ID=${AZCOPY_SPA_APPLICATION_ID}
-      - AZCOPY_SPA_CLIENT_SECRET=${AZCOPY_SPA_CLIENT_SECRET}
-      - SSH_AUTH_SOCK=/ssh-agent
-      - AZUREML_WORKSPACE_NAME=mlw-twitter-sentiment
-      - AZUREML_RESOURCE_GROUP=rg-twitter-ml
+      - PORT=8001
+
+  azure-mcp:
+    image: mcr.microsoft.com/azure-sdk/azure-mcp:latest
+    command: ["server", "start", "--transport", "http", "--outgoing-auth-strategy", "UseHostingEnvironmentIdentity", "--dangerously-disable-http-incoming-auth"]
+    env_file: ../.azure.env
+    ports:
+      - 8002:8002
+    environment:
+      - ASPNETCORE_URLS=http://+:8002
+
+  github-mcp:
+    build:
+      context: .
+      dockerfile: dev/github-mcp.Dockerfile
+    env_file: ../.github.env
+    ports:
+      - 8082:8082
+    environment:
+      - PORT=8082
