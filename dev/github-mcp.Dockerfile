@@ -30,4 +30,7 @@ EXPOSE 8082
 
 # Stateless Streamable HTTP endpoint defaults to /mcp. The stdio child
 # inherits this container's environment, including GITHUB_PERSONAL_ACCESS_TOKEN.
-CMD ["node", "./node_modules/supergateway/dist/index.js", "--stdio", "github-mcp-server stdio", "--outputTransport", "streamableHttp", "--port", "${PORT}"]
+# NOTE: JSON-array CMD form does no shell expansion, so a literal "${PORT}"
+# would be passed through and the bridge would crash on startup (leaving the
+# service name unresolvable). Use shell form so $PORT expands at runtime.
+CMD node ./node_modules/supergateway/dist/index.js --stdio "github-mcp-server stdio" --outputTransport streamableHttp --port ${PORT:-8082}

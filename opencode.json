@@ -17,6 +17,12 @@
       "url": "http://github-mcp:8082/mcp",
       "enabled": true,
       "oauth": false
+    },
+    "docker-hub": {
+      "type": "remote",
+      "url": "http://docker-hub-mcp:8083/mcp",
+      "enabled": true,
+      "oauth": false
     }
   }
 }

@@ -21,13 +21,18 @@ services:
       - PORT=8001
 
   azure-mcp:
-    image: mcr.microsoft.com/azure-sdk/azure-mcp:latest
-    command: ["server", "start", "--transport", "http", "--outgoing-auth-strategy", "UseHostingEnvironmentIdentity", "--dangerously-disable-http-incoming-auth"]
+    # Wrapped in dev/azure-mcp.Dockerfile: the upstream image's native
+    # `--transport http` exits 1 with no logs (3.0.0-beta.43), so we run its
+    # working `--transport stdio` behind supergateway (same pattern as
+    # github-mcp). Clients still reach Streamable HTTP at /mcp on $PORT.
+    build:
+      context: .
+      dockerfile: dev/azure-mcp.Dockerfile
     env_file: ../.azure.env
     ports:
       - 8002:8002
     environment:
-      - ASPNETCORE_URLS=http://+:8002
+      - PORT=8002
 
   github-mcp:
     build:
@@ -38,3 +43,13 @@ services:
       - 8082:8082
     environment:
       - PORT=8082
+
+  docker-hub-mcp:
+    build:
+      context: .
+      dockerfile: dev/docker-hub-mcp.Dockerfile
+    env_file: ../.docker-hub.env
+    ports:
+      - 8083:8083
+    environment:
+      - PORT=8083

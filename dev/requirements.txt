@@ -28,5 +28,8 @@ pytest==9.1.1
 ruff==0.16.7
 basedpyright==1.40.1
 pre-commit==4.6.2
+azureml-fsspec==1.4.0
+azure-ai-ml==1.35.0
+mcp[cli]==2.2.0
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.14.0+cpu
