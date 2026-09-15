@@ -16,15 +16,26 @@ FROM mcr.microsoft.com/azure-sdk/azure-mcp:latest
 
 USER root
 
-RUN apk add --no-cache nodejs npm
+RUN apk add --no-cache nodejs npm bash curl libc6-compat
 
 WORKDIR /app
 
-# Pinned version (keep in sync with dev/github-mcp.Dockerfile); bump to upgrade.
+# Pinned versions (keep SUPERGATEWAY_VERSION in sync with
+# dev/github-mcp.Dockerfile); bump to upgrade.
 ARG SUPERGATEWAY_VERSION=3.4.3
+ARG AZD_VERSION=1.34.0
 
 RUN npm install "supergateway@${SUPERGATEWAY_VERSION}" \
     && chown -R mcp:mcp /app
+
+# Azure Developer CLI, required by the server's `azd` tool (it execs `azd`
+# from PATH, otherwise every call fails with "'azd' is not installed or not
+# found in the system PATH"). Defaults install the binary under
+# /opt/microsoft/azd with a symlink at /usr/local/bin/azd, so it is visible
+# to the `mcp` runtime user regardless of HOME. The script needs bash/curl
+# (added above); the symlink folder must exist.
+RUN mkdir -p /usr/local/bin \
+    && curl -fsSL https://aka.ms/install-azd.sh | bash -s -- --version "${AZD_VERSION}"
 
 ENV PORT=8002
 EXPOSE 8002
