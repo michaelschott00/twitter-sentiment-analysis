@@ -470,7 +470,7 @@ ml_client.jobs.stream(job.name)
 Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod but remains fully tracked in the Azure ML workspace / MLflow.
 
 1. **Prereqs (Terraform, §10):** `runpod-mlflow-sp` service principal exists with `AzureML Data Scientist` on the workspace + `Storage Blob Data Contributor` on the storage account. Secret stored in Key Vault.
-2. **Start pod:** GPU pod (e.g. RTX A4000/4090) with PyTorch CUDA image; sync repo (`git clone` / `runpod` volume) and `pip install -r requirements-shared.txt -r requirements-cloud.txt`.
+2. **Start pod:** GPU pod (e.g. RTX A4000/4090) with PyTorch CUDA image; sync repo (`git clone` / `runpod` volume) and `pip install -e ".[torch]"`.
 3. **Inject creds (env vars, never committed):**
 
    ```bash

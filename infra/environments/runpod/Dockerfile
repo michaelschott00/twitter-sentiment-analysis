@@ -1,5 +1,7 @@
-# GPU training image. torch comes from the base image; LightGBM-only
-# deps (lightgbm, imbalanced-learn) are not needed here.
+# GPU training image. torch comes from the base image; the `torch` extra
+# leaves torch unpinned on purpose so pip keeps the base image's CUDA
+# build instead of reinstalling it. All other deps come from
+# pyproject.toml (single source of truth) — see the `torch` extra.
 #
 # Build context: repo root (so ./twitter and ./configs can be baked in).
 FROM runpod/pytorch:1.1.0-rc.154-cu1290-torch290-ubuntu2404
@@ -8,26 +10,10 @@ WORKDIR /project
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN pip install --no-cache-dir \
-    "lightning" \
-    "transformers" \
-    "torchmetrics" \
-    "pandas" \
-    "scikit-learn" \
-    "numpy" \
-    "jsonargparse[signatures]" \
-    "omegaconf" \
-    "sacremoses" \
-    "emoji" \
-    "nltk" \
-    "click" \
-    "pyyaml" \
-    "tqdm" \
-    "mlflow<=2.16.2" \
-    "azure-ai-ml" \
-    "azureml-mlflow"
-
+COPY ./pyproject.toml ./README.md ./
 COPY ./twitter ./twitter
+RUN pip install --no-cache-dir ".[torch]"
+
 COPY ./configs ./configs
 
 # RunPod base images expect /start.sh (Jupyter/SSH) to be running.

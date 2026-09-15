@@ -49,10 +49,18 @@ F1-score of 0.79 and earned the second place in the course competition.
 ## Usage
 
 ### Requirements
-Install the required packages by running the following command:
+The project is packaged as a Python package (see `pyproject.toml`). Install it
+with the extras you need:
 
 ```bash
-pip install -r requirements.txt
+# local dev on CPU (torch extra needs the CPU wheel index)
+pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,torch,lgbm,llm]"
+# GPU training only (torch comes from the RunPod base image)
+pip install -e ".[torch]"
+# LightGBM baseline only (Azure ML)
+pip install -e ".[lgbm]"
+# LLM baseline only
+pip install -e ".[llm]"
 ```
 
 ### Training

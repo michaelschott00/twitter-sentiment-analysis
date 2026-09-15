@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twitter-sentiment"
+version = "0.1.0"
+description = "Sentiment analysis on AI/ML Twitter data (transformers, LightGBM and LLM baselines)"
+readme = "README.md"
+requires-python = ">=3.12"
+# Core runtime: needed by every entry point (data loading, splitting, SVM utils).
+dependencies = [
+    "click==8.5.0",
+    "pyyaml==6.0.3",
+    "tqdm==4.70.1",
+    "numpy==2.5.3",
+    "pandas==2.3.3",
+    "scikit-learn==1.9.1",
+]
+
+[project.optional-dependencies]
+# GPU transformer training (RunPod) + scoring endpoint.
+# NOTE: torch itself is intentionally unpinned here. The RunPod base image
+# already ships a CUDA build of torch, and pip skips reinstalling when the
+# requirement is satisfied. For local CPU dev, install with:
+#   pip install --break-system-packages --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,torch,lgbm,llm]"
+torch = [
+    "torch",
+    "lightning==2.6.6",
+    "transformers==5.17.0",
+    "torchmetrics==1.9.0",
+    "jsonargparse[signatures]==4.52.0",
+    "omegaconf==2.3.1",
+    "sacremoses==0.2.0",
+    "emoji==2.15.0",
+    "nltk==3.10.3",
+    "tensorboard==2.20.0",
+    "matplotlib==3.11.1",
+    "mlflow==2.16.2",
+    "azureml-mlflow==1.62.0.post6",
+    "azure-identity==1.25.3",
+]
+# CPU LightGBM baseline (Azure ML).
+lgbm = [
+    "lightgbm==4.7.0",
+    "imbalanced-learn==0.14.2",
+    "mlflow==2.16.2",
+    "azureml-mlflow==1.62.0.post6",
+    "azure-identity==1.25.3",
+]
+# LLM batch baseline (twitter/baselines/llm_baseline.py).
+llm = [
+    "openai==3.13.0",
+    "tiktoken==0.14.0",
+    "mlflow==2.16.2",
+    "azureml-mlflow==1.62.0.post6",
+    "azure-identity==1.25.3",
+]
+# Local development / analysis tooling only.
+dev = [
+    "seaborn==0.13.2",
+    "gradio==6.27.0",
+    "requests==2.34.2",
+    "azure-ai-ml==1.35.0",
+    "pytest==9.1.1",
+    "ruff==0.16.7",
+    "basedpyright==1.40.1",
+    "pre-commit==4.6.2",
+    "mcp[cli]==2.2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["twitter*"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["twitter/tests"]
+python_files = ["*.py"]
+python_classes = ["*Tests", "Test*", "*Test"]
+python_functions = ["test_*"]
+addopts = "--ignore=twitter/tests/modules.py"

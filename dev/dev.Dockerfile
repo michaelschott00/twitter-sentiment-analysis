@@ -41,11 +41,13 @@ RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=lock
     && mkdir -p $HOME/.config/opencode $HOME/.local/share/opencode $HOME/.local/state/opencode \
     && $HOME/.opencode/bin/opencode completion >> $HOME/.bashrc
 
-# Install python packages
+# Install python packages from pyproject.toml (single source of truth).
+# The CPU torch index is needed so the `torch` extra resolves to CPU wheels.
 ENV PIP_CACHE_DIR=$HOME/.cache/pip
-COPY dev/requirements.txt .
+COPY pyproject.toml README.md ./
+COPY twitter ./twitter
 RUN --mount=type=cache,id=pip-dev,target=$HOME/.cache/pip,sharing=locked \
-    pip install --break-system-packages -r requirements.txt
+    pip install --break-system-packages --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,torch,lgbm,llm]"
 
 # Download NLTK data (downloaded into the cache, then copied into the image so
 # the agent user can find it at runtime; the cache keeps rebuilds offline)

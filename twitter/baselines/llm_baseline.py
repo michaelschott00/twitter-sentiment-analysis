@@ -110,7 +110,7 @@ def _setup_mlflow_tracking() -> None:
         import mlflow
     except ImportError as e:
         raise click.ClickException(
-            "MLflow is required for live runs (pip install mlflow azureml-mlflow). "
+            "MLflow is required for live runs (pip install -e '.[llm]'). "
             "Use --dry-run for local runs without MLflow."
         ) from e
 
@@ -824,7 +824,7 @@ def main(
         import mlflow
     except ImportError as e:
         raise click.ClickException(
-            "MLflow is required for live runs (pip install mlflow azureml-mlflow). "
+            "MLflow is required for live runs (pip install -e '.[llm]'). "
             "Use --dry-run for local runs without MLflow."
         ) from e
     _setup_mlflow_tracking()
