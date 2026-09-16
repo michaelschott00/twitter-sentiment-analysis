@@ -1,8 +1,11 @@
 - This environment is a docker container built from `dev/dev.Dockerfile` and `compose.yaml`. All changes to the environment should be documented in these files for future runs. The `docker` command itself is not available.
 - Python packages need to be installed with `--break-system-packages`. `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file.
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
-- This project does not use jupyter notebooks. Scripts with `click` based CLI are always preferred.
-- This project uses Terraform HCP, so terraform cannot be run locally. Instead, a push to the `dev` branch triggers terraform hcp to create a plan, which then has to be approved and applied by a human. It may take a while until a human is available to do this.
+- Scripts with `click` based CLI are always preferred over jupyter notebooks.
 - Git pushes should go to the `dev` branch.
+- Terraform is run on Terraform HCP, so terraform cannot be run locally.
+- A push to the `dev` branch triggers:
+  - a build and push to docker hub of the runpod docker image if it or any of its dependencies have changed.
+  - terraform hcp to create a plan, which then has to be approved and applied by a human. It may take a while until a human is available to do this.
 - Use username "agent" and mail address "<agent@example.com>" to identify yourself in git commits.
 - Tools requiring authentication are not available on the cli because this environment does not contain any credentials. For most actions, mcp tools are available with the mcp servers handling the authentication.

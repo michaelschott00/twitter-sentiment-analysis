@@ -12,9 +12,9 @@ ENV HOME=/home/agent \
 
 ARG AZURE_CLI_VERSION=2.90.0
 ARG ML_EXTENSION_VERSION=2.44.1
-ARG GH_VERSION=2.78.0
+ARG GH_VERSION=2.101.0
 ARG AZCOPY_VERSION=10.32.7
-ARG RUNPODCTL_VERSION=1.12.0
+ARG RUNPODCTL_VERSION=2.14.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates bash \

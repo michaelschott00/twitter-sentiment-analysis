@@ -72,3 +72,11 @@ tools:
     description: Create a RunPod pod with passthrough options.
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, pod, create]
+
+  - name: runpodctl_template_create
+    description: -<
+      Create a RunPod template.
+      The value for registry-auth-id is accessible from env var $RUNPOD_REGISTRY_AUTH_ID.
+      Secrets stored on runopd can be injected as environment variables prefixed with RUNPOD_SECRET_ (e.g. `API_KEY={{ RUNPOD_SECRET_openai_key }}`).
+    creds: [RUNPOD_API_KEY, RUNPOD_REGISTRY_AUTH_ID]
+    base_argv: [runpodctl, template, create]
