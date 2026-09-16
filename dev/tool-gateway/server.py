@@ -8,10 +8,12 @@ redact stdout/stderr (best-effort continue) -> audit log.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -31,9 +33,12 @@ RG_RE = re.compile(r"^rg-[a-z0-9-]+$")
 WS_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,60}$")
 FLAG_RE = re.compile(r"^--[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 SHELL_META = re.compile("[;|&$`!\n\r]")
+AZ_LOGIN_TIMEOUT_S = int(os.environ.get("AZ_LOGIN_TIMEOUT_S", "30"))
 
 broker = Broker()
 server = MCPServer("tool-gateway")
+_az_login_locks: dict[str, threading.Lock] = {}
+_az_login_locks_guard = threading.Lock()
 
 
 def _load_manifest() -> dict:
@@ -75,9 +80,89 @@ def _audit(tool: str, argv: list[str], rc: int, out_len: int, hits: int) -> None
         pass
 
 
+def _az_config_dir(env: dict[str, str]) -> str:
+    """Isolated AZURE_CONFIG_DIR for one SP so token caches never mix."""
+    digest = hashlib.sha256(
+        f"{env.get('AZURE_CLIENT_ID', '')}|{env.get('AZURE_TENANT_ID', '')}".encode()
+    ).hexdigest()[:16]
+    d = f"/tmp/azure-{digest}"
+    Path(d).mkdir(mode=0o700, parents=True, exist_ok=True)
+    return d
+
+
+def _az_login_lock(key: str) -> threading.Lock:
+    with _az_login_locks_guard:
+        lock = _az_login_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _az_login_locks[key] = lock
+        return lock
+
+
+def _ensure_az_login(env: dict[str, str]) -> str | None:
+    """Ensure `az` is authenticated using only the scoped env. Returns error or None."""
+    client_id = env.get("AZURE_CLIENT_ID")
+    tenant_id = env.get("AZURE_TENANT_ID")
+    client_secret = env.get("AZURE_CLIENT_SECRET")
+    if not client_id or not tenant_id or not client_secret:
+        return "returncode: 1\nerror: azure login unavailable: missing credentials"
+    env.setdefault("AZURE_CONFIG_DIR", _az_config_dir(env))
+    lock = _az_login_lock(env["AZURE_CONFIG_DIR"])
+    with lock:
+        try:
+            already = subprocess.run(
+                ["az", "account", "show", "--output", "none"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=AZ_LOGIN_TIMEOUT_S,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            already = None
+        except Exception:  # noqa: BLE001 - fall through to login attempt
+            already = None
+        if already is not None and already.returncode == 0:
+            return None
+        try:
+            result = subprocess.run(
+                [
+                    "az",
+                    "login",
+                    "--service-principal",
+                    "--username",
+                    client_id,
+                    "--tenant",
+                    tenant_id,
+                    "--password",
+                    client_secret,
+                    "--output",
+                    "none",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=AZ_LOGIN_TIMEOUT_S,
+                check=False,
+            )
+        except FileNotFoundError:
+            return "returncode: 127\nerror: executable not found: az"
+        except Exception as e:  # noqa: BLE001 - return errors as tool output
+            redacted, _ = redact(f"{type(e).__name__}: {e}", broker.secret_values())
+            return f"returncode: 1\nerror: azure login failed: {redacted}"
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip() or "login failed"
+            redacted, _ = redact(detail, broker.secret_values())
+            return f"returncode: 1\nerror: azure login failed: {redacted}"
+        return None
+
+
 def _run(tool_name: str, argv: list[str]) -> str:
     cfg = _tool_cfg(tool_name)
     env = broker.clean_env(cfg.get("creds", []))
+    if cfg.get("needs_az_login") and (err := _ensure_az_login(env)):
+        _audit(tool_name, argv, 1, len(err), 0)
+        return err
     try:
         proc = subprocess.run(
             argv,

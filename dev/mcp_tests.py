@@ -101,9 +101,16 @@ def test_job_yaml_missing_rejected(tmp_ws):
     assert "not found" in out
 
 
-def test_job_submit_builds_argv(tmp_ws):
+def test_job_submit_builds_argv(tmp_ws, monkeypatch):
     spec = tmp_ws / "job.yaml"
     spec.write_text("name: x\n")
+    _set_broker_secrets(
+        monkeypatch,
+        AZURE_CLIENT_ID="cid",
+        AZURE_TENANT_ID="tid",
+        AZURE_CLIENT_SECRET="csecret",
+    )
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
     with patch.object(server_mod.subprocess, "run") as m:
         m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         out = server_mod.azml_job_submit(job_yaml="job.yaml")
@@ -112,6 +119,82 @@ def test_job_submit_builds_argv(tmp_ws):
     assert argv[:4] == ["az", "ml", "job", "create"]
     assert "-g" in argv and "rg-twitter-ml" in argv
     assert "-w" in argv and "mlw-twitter-sentiment" in argv
+
+
+def test_az_login_skipped_when_already_authenticated(monkeypatch, tmp_ws):
+    spec = tmp_ws / "job.yaml"
+    spec.write_text("name: x\n")
+    _set_broker_secrets(
+        monkeypatch,
+        AZURE_CLIENT_ID="cid",
+        AZURE_TENANT_ID="tid",
+        AZURE_CLIENT_SECRET="csecret",
+    )
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.side_effect = [
+            MagicMock(returncode=0, stdout="", stderr=""),  # account show
+            MagicMock(returncode=0, stdout="ok", stderr=""),  # main cmd
+        ]
+        out = server_mod.azml_job_submit(job_yaml="job.yaml")
+    assert "returncode: 0" in out
+    assert m.call_count == 2
+    assert m.call_args_list[0][0][0][:3] == ["az", "account", "show"]
+
+
+def test_az_login_runs_on_cold_cache(monkeypatch, tmp_ws):
+    spec = tmp_ws / "job.yaml"
+    spec.write_text("name: x\n")
+    _set_broker_secrets(
+        monkeypatch,
+        AZURE_CLIENT_ID="cid",
+        AZURE_TENANT_ID="tid",
+        AZURE_CLIENT_SECRET="csecret",
+    )
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="not logged in"),
+            MagicMock(returncode=0, stdout="", stderr=""),  # login
+            MagicMock(returncode=0, stdout="ok", stderr=""),  # main cmd
+        ]
+        out = server_mod.azml_job_submit(job_yaml="job.yaml")
+    assert "returncode: 0" in out
+    assert m.call_count == 3
+    assert m.call_args_list[1][0][0][:2] == ["az", "login"]
+    assert "csecret" not in out  # secret never leaks into tool output
+
+
+def test_az_login_only_for_azure_tools(monkeypatch):
+    _set_broker_secrets(monkeypatch, GITHUB_TOKEN="gh-secret")
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        server_mod.gh(["issue", "list"])
+    for c in m.call_args_list:
+        assert c[0][0][:2] != ["az", "login"]
+        assert c[0][0][:3] != ["az", "account", "show"]
+
+
+def test_az_login_failure_redacts_secret(monkeypatch, tmp_ws):
+    secret = "super-secret-value-123"
+    spec = tmp_ws / "job.yaml"
+    spec.write_text("name: x\n")
+    _set_broker_secrets(
+        monkeypatch,
+        AZURE_CLIENT_ID="cid",
+        AZURE_TENANT_ID="tid",
+        AZURE_CLIENT_SECRET=secret,
+    )
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="not logged in"),
+            MagicMock(returncode=1, stdout="", stderr=f"bad {secret}"),
+        ]
+        out = server_mod.azml_job_submit(job_yaml="job.yaml")
+    assert "returncode: 1" in out and "azure login failed" in out
+    assert secret not in out
 
 
 def test_gh_rejects_disallowed_subcommand():

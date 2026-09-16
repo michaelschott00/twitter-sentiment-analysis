@@ -18,9 +18,6 @@ SECRET_NAMES = [
     "AZURE_CLIENT_ID",
     "AZURE_TENANT_ID",
     "AZURE_CLIENT_SECRET",
-    "AZCOPY_SPA_APPLICATION_ID",
-    "AZCOPY_TENANT_ID",
-    "AZCOPY_SPA_CLIENT_SECRET",
     "OPENAI_API_KEY",
 ]
 
@@ -56,7 +53,7 @@ class Broker:
             if val := os.environ.get(name):
                 env[name] = val
         # Non-secret config passthrough (safe to share across tools).
-        for name in ("AZURE_SUBSCRIPTION_ID", "PORT"):
+        for name in ("AZURE_SUBSCRIPTION_ID", "AZURE_CONFIG_DIR", "PORT"):
             if val := os.environ.get(name):
                 env[name] = val
         for name in creds:

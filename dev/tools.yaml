@@ -17,16 +17,19 @@ tools:
   - name: azml_job_submit
     description: Submit any AML yaml job file (generic, not tied to infra/jobs).
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
+    needs_az_login: true
     base_argv: [az, ml, job, create]
 
   - name: azml_job_list
     description: List AML jobs in the workspace.
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
+    needs_az_login: true
     base_argv: [az, ml, job, list]
 
   - name: azcopy
     description: AzCopy passthrough constrained to blob storage URLs.
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
+    needs_az_login: true
     base_argv: [azcopy]
 
   - name: runpodctl_pod_create
