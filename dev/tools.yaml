@@ -26,6 +26,11 @@ tools:
     creds: [GITHUB_TOKEN]
     base_argv: [gh, auth]
 
+  - name: git_push
+    description: Git push to GitHub remote.
+    creds: [GITHUB_TOKEN]
+    base_argv: [git, push]
+
   - name: azml_job_submit
     description: Submit any AML yaml job file (generic, not tied to infra/jobs).
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]

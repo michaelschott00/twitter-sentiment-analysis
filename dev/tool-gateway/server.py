@@ -99,6 +99,19 @@ def _defaults() -> dict:
     return _DEFAULTS
 
 
+def _format_exception(e: BaseException) -> str:
+    """Unwrap ExceptionGroup/TaskGroup to the real message(s)."""
+    if isinstance(e, BaseExceptionGroup):
+        parts = [_format_exception(sub) for sub in e.exceptions]
+        return "; ".join(p for p in parts if p)
+    return f"{type(e).__name__}: {e}"
+
+
+def _error_result(e: BaseException) -> str:
+    redacted, _ = redact(_format_exception(e), broker.secret_values())
+    return f"returncode: 1\nerror: {redacted}"
+
+
 def _audit(tool: str, argv: list[str], rc: int, out_len: int, hits: int) -> None:
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -200,14 +213,17 @@ def _ensure_az_login(env: dict[str, str]) -> str | None:
 
 def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
     tool_name = cfg.get("name", "unknown")
-    env = broker.clean_env(cfg.get("creds", []))
-    if (
-        cfg.get("needs_az_login")
-        and not skip_az_login
-        and (err := _ensure_az_login(env))
-    ):
-        _audit(tool_name, argv, 1, len(err), 0)
-        return err
+    try:
+        env = broker.clean_env(cfg.get("creds", []))
+        if (
+            cfg.get("needs_az_login")
+            and not skip_az_login
+            and (err := _ensure_az_login(env))
+        ):
+            _audit(tool_name, argv, 1, len(err), 0)
+            return err
+    except Exception as e:  # noqa: BLE001 - return errors as tool output
+        return _error_result(e)
     try:
         proc = subprocess.run(
             argv,
@@ -233,7 +249,7 @@ def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
     except FileNotFoundError:
         return f"returncode: 127\nerror: executable not found: {argv[0]}"
     except Exception as e:  # noqa: BLE001 - return errors as tool output
-        return f"returncode: 1\nerror: {type(e).__name__}: {e}"
+        return _error_result(e)
 
 
 def _run(tool_name: str, argv: list[str]) -> str:
@@ -416,9 +432,9 @@ def _make_fn(cfg: dict, defaults: dict):
                     cfg, [*cfg.get("base_argv", []), *help_argv], skip_az_login=True
                 )
             checked = _validate_argv(cfg, defaults, list(argv or []))
-        except (ValueError, TypeError) as e:
-            return f"returncode: 1\nerror: {e}"
-        return _run_cfg(cfg, checked)
+            return _run_cfg(cfg, checked)
+        except Exception as e:  # noqa: BLE001 - never raise; MCP wraps raises in ExceptionGroup
+            return _error_result(e)
 
     fn.__name__ = name
     fn.__doc__ = full_desc

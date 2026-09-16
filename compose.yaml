@@ -17,6 +17,8 @@ services:
     build:
       context: .
       dockerfile: dev/tool-gateway/Dockerfile
+    volumes:
+      - .:/workspace
     ports:
       - 8004:8004
     env_file:

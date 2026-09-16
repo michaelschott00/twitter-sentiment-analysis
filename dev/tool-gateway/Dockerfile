@@ -3,12 +3,12 @@
 # Pinned versions mirror dev/dev.Dockerfile conventions.
 FROM python:3.12.14-slim
 
-WORKDIR /app
+WORKDIR /workspace
 
 ENV HOME=/home/agent \
     PIP_CACHE_DIR=/home/agent/.cache/pip \
     PORT=8004 \
-    TOOLS_YAML=/app/tools.yaml
+    TOOLS_YAML=/workspace/dev/tools.yaml
 
 ARG AZURE_CLI_VERSION=2.90.0
 ARG ML_EXTENSION_VERSION=2.44.1
@@ -30,6 +30,14 @@ RUN curl -fsSL -o /tmp/gh.deb \
       https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb \
     && apt-get update && apt-get install -y --no-install-recommends /tmp/gh.deb \
     && rm -rf /tmp/gh.deb /var/lib/apt/lists/*
+COPY <<EOF $HOME/.gitconfig
+[credential "https://github.com"]
+        helper =
+        helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+        helper =
+        helper = !/usr/bin/gh auth git-credential
+EOF
 
 # azcopy (pinned).
 RUN curl -fsSL https://github.com/Azure/azure-storage-azcopy/releases/download/v${AZCOPY_VERSION}/azcopy_linux_amd64_${AZCOPY_VERSION}.tar.gz -o /tmp/azcopy.tgz \
@@ -42,14 +50,13 @@ RUN curl -fsSL -o /usr/local/bin/runpodctl \
       https://github.com/runpod/runpodctl/releases/download/v${RUNPODCTL_VERSION}/runpodctl-linux-amd64 \
     && chmod 755 /usr/local/bin/runpodctl
 
-RUN useradd -m -u 1000 agent && mkdir -p /home/agent/.cache/pip && chown -R agent:agent /home/agent /app
+RUN useradd -m -u 1000 agent && mkdir -p /home/agent/.cache/pip && chown -R agent:agent /home/agent /workspace
 USER agent
 
-COPY dev/tool-gateway/server.py dev/tool-gateway/broker.py dev/tool-gateway/redact.py ./
-
-# tools.yaml mounted at runtime; copy as fallback for local runs.
-COPY dev/tools.yaml /app/tools.yaml
+# Use bind mounts for now so this container has access to the repo
+# COPY dev/tool-gateway/server.py dev/tool-gateway/broker.py dev/tool-gateway/redact.py ./
+# COPY dev/tools.yaml /app/tools.yaml
 
 EXPOSE 8004
 
-CMD ["python", "server.py"]
+CMD ["python", "dev/tool-gateway/server.py"]
