@@ -1,115 +1,72 @@
-"""Smoke-test MCP servers from compose.yaml / opencode.json.
-
-Lists the tools each server offers to verify the setup is correct.
+"""Smoke-test the single tool-gateway MCP server.
 
 Run with:
-    python dev/mcp_client.py
-    python dev/mcp_client.py --server runpod --verbose
-    python dev/mcp_client.py --json
+    python dev/mcp_client.py --list
+    python dev/mcp_client.py --call gh --args-json '{"args": ["--version"]}'
+    python dev/mcp_client.py --call azml_job_list --args-json '{}'
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 
 import click
 from mcp import Client
 
-# Keep in sync with compose.yaml service names/ports and opencode.json mcp urls.
-SERVERS: dict[str, str] = {
-    "runpod": "http://runpod-mcp:8001/mcp",
-    "azure-mcp": "http://azure-mcp:8002/mcp",
-    "github": "http://github-mcp:8082/mcp",
-}
+GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://tool-gateway:8004/mcp")
 
 
-def _format_error(e: BaseException) -> str:
-    """Unwrap ExceptionGroups (anyio TaskGroups) to show the root cause."""
-    sub_exceptions = getattr(e, "exceptions", None)
-    if isinstance(sub_exceptions, (tuple, list)):
-        parts = [_format_error(sub) for sub in sub_exceptions]
-        return f"{type(e).__name__}: {e} <- [{'; '.join(parts)}]"
-    return f"{type(e).__name__}: {e}"
-
-
-async def list_server_tools(name: str, url: str, timeout: float) -> dict:
-    """Connect to one server and list its tools. Never raises."""
+async def _list(url: str, timeout: float) -> dict:
     try:
         async with Client(url, read_timeout_seconds=timeout) as client:
             result = await client.list_tools()
-            tools = [
-                {"name": t.name, "description": t.description or ""}
-                for t in result.tools
-            ]
-            return {"name": name, "url": url, "ok": True, "tools": tools}
-    except Exception as e:  # noqa: BLE001 - smoke test: any failure is a FAIL result
-        return {"name": name, "url": url, "ok": False, "error": _format_error(e)}
+            return {
+                "ok": True,
+                "tools": [
+                    {"name": t.name, "description": t.description or ""}
+                    for t in result.tools
+                ],
+            }
+    except Exception as e:  # noqa: BLE001 - smoke test reports failures
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
-async def check_all(names: tuple[str, ...], timeout: float) -> list[dict]:
-    selected = [(n, SERVERS[n]) for n in names]
-    results = await asyncio.gather(
-        *(list_server_tools(n, u, timeout) for n, u in selected)
-    )
-    return list(results)
+async def _call(url: str, tool: str, args: dict, timeout: float) -> dict:
+    try:
+        async with Client(url, read_timeout_seconds=timeout) as client:
+            result = await client.call_tool(tool, args)
+            return {"ok": True, "result": str(result)}
+    except Exception as e:  # noqa: BLE001 - smoke test reports failures
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 @click.command()
-@click.option(
-    "--server",
-    "-s",
-    "servers",
-    multiple=True,
-    type=click.Choice(list(SERVERS)),
-    help="Only check these servers (default: all). Repeatable.",
-)
-@click.option(
-    "--timeout",
-    type=float,
-    default=30,
-    show_default=True,
-    help="Per-request read timeout in seconds.",
-)
-@click.option(
-    "--verbose",
-    "-v",
-    is_flag=True,
-    help="Show tool descriptions as well as names.",
-)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit machine-readable JSON instead of human-readable text.",
-)
+@click.option("--url", default=GATEWAY_URL, show_default=True)
+@click.option("--timeout", type=float, default=30, show_default=True)
+@click.option("--list", "list_tools", is_flag=True, help="List gateway tools.")
+@click.option("--call", "call_tool", default=None, help="Tool name to call.")
+@click.option("--args-json", default="{}", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
 def main(
-    servers: tuple[str, ...], timeout: float, verbose: bool, as_json: bool
+    url: str,
+    timeout: float,
+    list_tools: bool,
+    call_tool: str | None,
+    args_json: str,
+    as_json: bool,
 ) -> None:
-    """List tools offered by each MCP server to verify setup."""
-    names = tuple(servers) or tuple(SERVERS)
-    results = asyncio.run(check_all(names, timeout))
-
-    if as_json:
-        click.echo(json.dumps(results, indent=2))
+    if call_tool:
+        args = json.loads(args_json)
+        res = asyncio.run(_call(url, call_tool, args, timeout))
     else:
-        for r in results:
-            if r["ok"]:
-                click.echo(f"[{r['name']}] OK  {r['url']}  ({len(r['tools'])} tools)")
-                for t in r["tools"]:
-                    if verbose and t["description"]:
-                        first_line = t["description"].splitlines()[0][:120]
-                        click.echo(f"  - {t['name']}: {first_line}")
-                    else:
-                        click.echo(f"  - {t['name']}")
-            else:
-                click.echo(f"[{r['name']}] FAIL  {r['url']}\n  {r['error']}", err=True)
-
-    if not all(r["ok"] for r in results):
-        n_fail = sum(1 for r in results if not r["ok"])
-        click.echo(f"\n{n_fail}/{len(results)} server(s) failed.", err=True)
+        res = asyncio.run(_list(url, timeout))
+    if True:  # always JSON for now
+        click.echo(json.dumps(res, indent=2))
+    if not res.get("ok"):
         sys.exit(1)
-    if not as_json:
-        click.echo(f"\nAll {len(results)} server(s) OK.")
 
 
 if __name__ == "__main__":

@@ -1,343 +1,149 @@
-"""Tests for dev/mcp_server.py sidecar tools.
+"""Tests for the tool-gateway (broker scoping, validation, redaction).
 
 Run with: pytest dev/mcp_tests.py
 """
 
-import os
-import subprocess
+import base64
 import sys
+import urllib.parse
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "tool-gateway"))
 
-from dev import mcp_server
-from dev.mcp_server import ToolError
+import broker as broker_mod
+import redact as redact_mod
+import server as server_mod
 
 
 @pytest.fixture
-def ws_root(tmp_path, monkeypatch):
-    """Isolated workspace root so file-guard tests don't touch the repo."""
+def tmp_ws(tmp_path, monkeypatch):
     root = tmp_path / "workspace"
     root.mkdir()
-    monkeypatch.setattr(mcp_server, "_WORKSPACE_ROOT", str(root))
+    monkeypatch.setattr(server_mod, "REPO_ROOT", root)
     return root
 
 
-@pytest.fixture
-def spec_yaml(ws_root):
-    spec = ws_root / "job.yaml"
-    spec.write_text("name: test-job\n")
-    return spec.name  # relative path, as callers would pass it
+def _set_broker_secrets(monkeypatch, **vals):
+    for name in broker_mod.SECRET_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    for k, v in vals.items():
+        monkeypatch.setenv(k, v)
 
 
-@pytest.fixture
-def scope_env(monkeypatch):
-    monkeypatch.setenv("AZUREML_WORKSPACE_NAME", "test-ws")
-    monkeypatch.setenv("AZUREML_RESOURCE_GROUP", "test-rg")
+# --- broker scoping ----------------------------------------------------------
 
 
-def _ok(stdout="ok"):
-    return MagicMock(returncode=0, stdout=stdout, stderr="")
+def test_gh_env_excludes_azure_and_runpod(monkeypatch):
+    _set_broker_secrets(
+        monkeypatch,
+        GITHUB_TOKEN="gh-secret",
+        AZURE_CLIENT_SECRET="az-secret",
+        RUNPOD_API_KEY="rp-secret",
+    )
+    b = broker_mod.Broker()
+    env = b.clean_env(["GITHUB_TOKEN"])
+    assert env.get("GITHUB_TOKEN") == "gh-secret"
+    assert "AZURE_CLIENT_SECRET" not in env
+    assert "RUNPOD_API_KEY" not in env
 
 
-def _run_tool(fn, **kwargs):
-    with patch.object(mcp_server.subprocess, "run") as mock_run:
-        mock_run.return_value = _ok()
-        out = fn(**kwargs)
-        return out, mock_run.call_args[0][0]
+def test_runpod_env_excludes_github(monkeypatch):
+    _set_broker_secrets(
+        monkeypatch, GITHUB_TOKEN="gh-secret", RUNPOD_API_KEY="rp-secret"
+    )
+    b = broker_mod.Broker()
+    env = b.clean_env(["RUNPOD_API_KEY"])
+    assert env["RUNPOD_API_KEY"] == "rp-secret"
+    assert "GITHUB_TOKEN" not in env
 
 
-# --- tool registration -----------------------------------------------------
+# --- redaction ---------------------------------------------------------------
 
 
-def test_all_tools_registered():
-    for tool in (
-        "azml_data",
-        "azml_environment",
-        "azml_job",
-        "azml_online_endpoint",
-        "azml_online_deployment",
-        "azcopy_upload",
-        "git_push",
-    ):
-        assert callable(getattr(mcp_server, tool, None)), tool
-
-
-# --- _ensure_azure_login ----------------------------------------------------
-
-
-def test_login_skipped_when_env_missing(monkeypatch, capsys):
-    for var in (
-        "AZCOPY_SPA_APPLICATION_ID",
-        "AZCOPY_TENANT_ID",
-        "AZCOPY_SPA_CLIENT_SECRET",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    mcp_server._ensure_azure_login()
-    assert "skipped" in capsys.readouterr().err
-
-
-def test_login_skipped_when_already_authenticated(monkeypatch):
-    monkeypatch.setenv("AZCOPY_SPA_APPLICATION_ID", "app")
-    monkeypatch.setenv("AZCOPY_TENANT_ID", "tenant")
-    monkeypatch.setenv("AZCOPY_SPA_CLIENT_SECRET", "secret")
-    with patch.object(mcp_server.subprocess, "run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-        mcp_server._ensure_azure_login()
-        assert mock_run.call_count == 1
-        assert mock_run.call_args[0][0][:3] == ["az", "account", "show"]
-
-
-def test_login_runs_service_principal_login(monkeypatch):
-    monkeypatch.setenv("AZCOPY_SPA_APPLICATION_ID", "test-app")
-    monkeypatch.setenv("AZCOPY_TENANT_ID", "test-tenant")
-    monkeypatch.setenv("AZCOPY_SPA_CLIENT_SECRET", "super-secret")
-    with patch.object(mcp_server.subprocess, "run") as mock_run:
-        mock_run.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="not logged in"),
-            MagicMock(returncode=0, stdout="", stderr=""),
+def test_redact_exact_url_b64_variants():
+    secret = "s3cr3t-value/with?chars"
+    secrets = {"AZURE_CLIENT_SECRET": secret}
+    text = " ".join(
+        [
+            secret,
+            urllib.parse.quote(secret, safe=""),
+            base64.b64encode(secret.encode()).decode(),
         ]
-        mcp_server._ensure_azure_login()
-        login_cmd = mock_run.call_args_list[1][0][0]
-        assert login_cmd == [
-            "az",
-            "login",
-            "--service-principal",
-            "--username",
-            "test-app",
-            "--tenant",
-            "test-tenant",
-            "--password",
-            "super-secret",
-            "--output",
-            "none",
-        ]
-
-
-def test_login_failure_redacts_secret(monkeypatch, capsys):
-    monkeypatch.setenv("AZCOPY_SPA_APPLICATION_ID", "test-app")
-    monkeypatch.setenv("AZCOPY_TENANT_ID", "test-tenant")
-    monkeypatch.setenv("AZCOPY_SPA_CLIENT_SECRET", "super-secret")
-    with patch.object(mcp_server.subprocess, "run") as mock_run:
-        mock_run.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="not logged in"),
-            MagicMock(returncode=1, stdout="", stderr="bad creds"),
-        ]
-        mcp_server._ensure_azure_login()
-        err = capsys.readouterr().err
-        assert "super-secret" not in err
-        assert "azure login failed" in err
-
-
-# --- scope / workspace guards ----------------------------------------------
-
-
-def test_missing_scope_raises(monkeypatch):
-    monkeypatch.delenv("AZUREML_WORKSPACE_NAME", raising=False)
-    monkeypatch.delenv("AZUREML_RESOURCE_GROUP", raising=False)
-    with pytest.raises(ToolError):
-        mcp_server.azml_data("list")
-    with pytest.raises(ToolError):
-        mcp_server.azml_data("list", workspace="ws")
-    with pytest.raises(ToolError):
-        mcp_server.azml_data("list", resource_group="rg")
-
-
-def test_scope_env_fallback(scope_env):
-    _, cmd = _run_tool(mcp_server.azml_job, operation="list")
-    assert "test-ws" in cmd and "test-rg" in cmd
-
-
-# --- file guards ------------------------------------------------------------
-
-
-def test_file_outside_workspace_rejected(scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_data(
-            "create",
-            file="/etc/passwd",
-            workspace="ws",
-            resource_group="rg",
-        )
-
-
-def test_file_escape_rejected(ws_root, scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_data(
-            "create",
-            file="../outside.yaml",
-            workspace="ws",
-            resource_group="rg",
-        )
-
-
-def test_file_not_found_rejected(ws_root, scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_data(
-            "create",
-            file="nonexistent.yaml",
-            workspace="ws",
-            resource_group="rg",
-        )
-
-
-def test_non_yaml_rejected(ws_root, scope_env):
-    (ws_root / "notes.txt").write_text("hi\n")
-    with pytest.raises(ToolError):
-        mcp_server.azml_data(
-            "create", file="notes.txt", workspace="ws", resource_group="rg"
-        )
-
-
-# --- argument guards --------------------------------------------------------
-
-
-def test_set_args_must_be_key_value(spec_yaml, scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_data(
-            "create",
-            file=spec_yaml,
-            workspace="ws",
-            resource_group="rg",
-            set_args=["--output json"],
-        )
-
-
-def test_endpoint_update_needs_change(scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_online_endpoint(
-            "update", name="tw-sentiment", workspace="ws", resource_group="rg"
-        )
-
-
-def test_show_needs_name(scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_data("show", workspace="ws", resource_group="rg")
-
-
-def test_deployment_show_needs_endpoint(scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_online_deployment(
-            "show", name="blue", workspace="ws", resource_group="rg"
-        )
-
-
-def test_deployment_create_needs_file_or_names(scope_env):
-    with pytest.raises(ToolError):
-        mcp_server.azml_online_deployment("create", workspace="ws", resource_group="rg")
-
-
-# --- command construction ---------------------------------------------------
-
-
-def _assert_minimal_output(cmd):
-    assert cmd[-3:] == ["--output", "table", "--only-show-errors"]
-    assert "get-credentials" not in cmd
-    assert "regenerate-keys" not in cmd
-
-
-def test_data_create(spec_yaml, scope_env):
-    _, cmd = _run_tool(mcp_server.azml_data, operation="create", file=spec_yaml)
-    assert cmd[:4] == ["az", "ml", "data", "create"]
-    assert "--file" in cmd
-    assert "--workspace-name" in cmd and "--resource-group" in cmd
-    _assert_minimal_output(cmd)
-
-
-def test_environment_list(scope_env):
-    _, cmd = _run_tool(mcp_server.azml_environment, operation="list")
-    assert cmd[:4] == ["az", "ml", "environment", "list"]
-    _assert_minimal_output(cmd)
-
-
-def test_job_create_with_stream(spec_yaml, scope_env):
-    _, cmd = _run_tool(
-        mcp_server.azml_job,
-        operation="create",
-        file=spec_yaml,
-        stream_logs=True,
     )
-    assert cmd[:4] == ["az", "ml", "job", "create"]
-    assert "--stream" in cmd
-    _assert_minimal_output(cmd)
+    out, _ = redact_mod.redact(text, secrets)
+    assert secret not in out
+    assert "AZURE_CLIENT_SECRET" in out
 
 
-def test_job_stream_uses_name(scope_env):
-    _, cmd = _run_tool(mcp_server.azml_job, operation="stream", name="job1")
-    assert cmd[:4] == ["az", "ml", "job", "stream"]
-    assert "--name" in cmd and "job1" in cmd
-    _assert_minimal_output(cmd)
+def test_heuristic_continues():
+    out, hits = redact_mod.redact("leaked ghp_abcdefghijklmnopqrst ok", {})
+    assert hits == 1 and "ghp_" not in out and out.endswith("ok")
 
 
-def test_endpoint_update_traffic(scope_env):
-    _, cmd = _run_tool(
-        mcp_server.azml_online_endpoint,
-        operation="update",
-        name="tw-sentiment",
-        traffic="blue=100",
+# --- validation --------------------------------------------------------------
+
+
+def test_rg_override_rejected():
+    out = server_mod.azml_job_list(resource_group="BAD_RG!!")
+    assert "returncode: 1" in out and "invalid resource_group" in out
+
+
+def test_job_yaml_outside_workspace_rejected(tmp_ws):
+    out = server_mod.azml_job_submit(job_yaml="/etc/passwd")
+    assert "returncode: 1" in out
+
+
+def test_job_yaml_missing_rejected(tmp_ws):
+    out = server_mod.azml_job_submit(job_yaml="nope.yaml")
+    assert "not found" in out
+
+
+def test_job_submit_builds_argv(tmp_ws):
+    spec = tmp_ws / "job.yaml"
+    spec.write_text("name: x\n")
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        out = server_mod.azml_job_submit(job_yaml="job.yaml")
+    assert "returncode: 0" in out
+    argv = m.call_args[0][0]
+    assert argv[:4] == ["az", "ml", "job", "create"]
+    assert "-g" in argv and "rg-twitter-ml" in argv
+    assert "-w" in argv and "mlw-twitter-sentiment" in argv
+
+
+def test_gh_rejects_disallowed_subcommand():
+    out = server_mod.gh(["auth", "status"])
+    assert "returncode: 1" in out
+
+
+def test_runpodctl_rejects_shell_meta():
+    out = server_mod.runpodctl_pod_create(["--name", "x; rm -rf /"])
+    assert "returncode: 1" in out
+
+
+def test_runpodctl_forwards_valid_options():
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        server_mod.runpodctl_pod_create(["--name", "mypod"])
+    assert m.call_args[0][0][:3] == ["runpodctl", "pod", "create"]
+
+
+def test_azcopy_rejects_non_blob_url():
+    out = server_mod.azcopy(
+        ["copy", "https://evil.example/x", "https://evil.example/y"]
     )
-    assert "update" in cmd and "--traffic" in cmd and "blue=100" in cmd
-    _assert_minimal_output(cmd)
+    assert "URL not allowed" in out
 
 
-def test_endpoint_delete_auto_confirms(scope_env):
-    _, cmd = _run_tool(
-        mcp_server.azml_online_endpoint, operation="delete", name="tw-sentiment"
-    )
-    assert "delete" in cmd and "--yes" in cmd
-    _assert_minimal_output(cmd)
-
-
-def test_deployment_get_logs(scope_env):
-    _, cmd = _run_tool(
-        mcp_server.azml_online_deployment,
-        operation="get-logs",
-        name="blue",
-        endpoint="tw-sentiment",
-        lines=50,
-    )
-    assert "get-logs" in cmd
-    assert "--lines" in cmd and "50" in cmd
-    assert "--endpoint-name" in cmd and "tw-sentiment" in cmd
-    _assert_minimal_output(cmd)
-
-
-def test_set_args_forwarded(spec_yaml, scope_env):
-    _, cmd = _run_tool(
-        mcp_server.azml_data,
-        operation="create",
-        file=spec_yaml,
-        set_args=["tags.env=dev"],
-    )
-    assert "--set" in cmd and "tags.env=dev" in cmd
-
-
-# --- output handling --------------------------------------------------------
-
-
-def test_long_output_truncated(scope_env):
-    with patch.object(mcp_server.subprocess, "run") as mock_run:
-        mock_run.return_value = _ok(stdout="x" * 9000)
-        out = mcp_server.azml_environment("list")
-        assert "truncated" in out
-        assert len(out) < 9000
-
-
-def test_stream_timeout_returns_partial(scope_env):
-    with patch.object(mcp_server.subprocess, "run") as mock_run:
-        mock_run.side_effect = subprocess.TimeoutExpired(
-            cmd="az ml job stream", timeout=180, output="partial-logs"
-        )
-        out = mcp_server.azml_job("stream", name="job1")
-        assert "returncode: 124" in out
-        assert "partial-logs" in out
-
-
-# --- existing tools keep minimal output -------------------------------------
-
-
-def test_azcopy_rejects_verbosity_override():
-    with pytest.raises(ToolError):
-        mcp_server.azcopy_upload("src", "dst", ["--output-level=json"])
+def test_canary_never_leaks(monkeypatch, tmp_ws):
+    canary = "canary-9f8e7d6c5b4a"
+    _set_broker_secrets(monkeypatch, GITHUB_TOKEN=canary)
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout=f"token={canary}", stderr="")
+        out = server_mod.gh(["issue", "list"])
+    assert canary not in out
+    assert "GITHUB_TOKEN" in out

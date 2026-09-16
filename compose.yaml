@@ -10,46 +10,18 @@ services:
       - ~/.local/share/opencode:/home/agent/.local/share/opencode
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
 
-  runpod-mcp:
+  # Single authenticated exec gateway. Secrets enter ONLY here via env_file;
+  # the agent (dev) container holds none. Add new creds by adding an env_file
+  # line; add new commands in dev/tools.yaml (no new service required).
+  tool-gateway:
     build:
       context: .
-      dockerfile: dev/runpod-mcp.Dockerfile
+      dockerfile: dev/tool-gateway/Dockerfile
     ports:
-      - 8001:8001
-    env_file: ../.runpod.env
+      - 8004:8004
+    env_file:
+      - ../.github.env
+      - ../.runpod.env
+      - ../.azure.env
     environment:
-      - PORT=8001
-
-  azure-mcp:
-    # Wrapped in dev/azure-mcp.Dockerfile: the upstream image's native
-    # `--transport http` exits 1 with no logs (3.0.0-beta.43), so we run its
-    # working `--transport stdio` behind supergateway (same pattern as
-    # github-mcp). Clients still reach Streamable HTTP at /mcp on $PORT.
-    build:
-      context: .
-      dockerfile: dev/azure-mcp.Dockerfile
-    env_file: ../.azure.env
-    ports:
-      - 8002:8002
-    environment:
-      - PORT=8002
-
-  github-mcp:
-    build:
-      context: .
-      dockerfile: dev/github-mcp.Dockerfile
-    env_file: ../.github.env
-    ports:
-      - 8082:8082
-    environment:
-      - PORT=8082
-
-  docker-hub-mcp:
-    build:
-      context: .
-      dockerfile: dev/docker-hub-mcp.Dockerfile
-    env_file: ../.docker-hub.env
-    ports:
-      - 8083:8083
-    environment:
-      - PORT=8083
+      - PORT=8004
