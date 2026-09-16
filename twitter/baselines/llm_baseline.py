@@ -6,6 +6,19 @@ through the `Batch API <https://developers.openai.com/api/docs/guides/batch>`_
 (50% lower cost, separate higher rate limits, 24h turnaround) instead of
 one synchronous ``chat.completions.create`` call per tweet.
 
+Data source (single source of truth: the ``twitter-splits`` Azure ML data
+asset, ``infra/data/twitter-splits.yaml``):
+
+1. Explicit ``--dev-path`` / ``--train-path`` CSVs (local files or an AML
+   ``${{inputs.splits}}`` mount, e.g. ``--splits-dir ${{inputs.splits}}``).
+2. ``--splits-dir`` folder containing ``tweets_dev.csv`` / ``tweets_train.csv``
+   (same ``uri_folder`` mount pattern as ``infra/jobs/*.yaml``).
+3. Direct download from the data asset via ``MLClient`` + ``azure-storage-blob``
+   (same approach as ``infra/scripts/read_remote_data.py`` — bypasses
+   ``azureml-fsspec`` browser login): pass ``--resource-group`` / ``--workspace``
+   (plus ``--subscription-id`` or ``$AZURE_SUBSCRIPTION_ID``).
+4. Legacy local fallback ``data/splits/tweets_*.csv`` (deprecated).
+
 Workflow (live mode):
 
 1. Build one ``/v1/chat/completions`` request per tweet and write them as
@@ -74,6 +87,11 @@ BATCH_METHOD = "POST"
 DEFAULT_COMPLETION_WINDOW = "24h"
 TERMINAL_BATCH_STATUSES = {"completed", "failed", "expired", "cancelled"}
 
+DEFAULT_DATA_NAME = "twitter-splits"
+DEFAULT_DATA_VERSION = "1"
+LEGACY_DEV_PATH = "data/splits/tweets_dev.csv"
+LEGACY_TRAIN_PATH = "data/splits/tweets_train.csv"
+
 SYSTEM_PROMPT = (
     "You are an expert sentiment analysis model for Twitter data, "
     "specialized in AI and Machine Learning related tweets.\n\n"
@@ -91,6 +109,140 @@ SYSTEM_PROMPT = (
     'Example: {"sentiment": "positive", "valence": 0.8}\n'
     "Output ONLY the JSON object, no extra text."
 )
+
+
+# ---------------------------------------------------------------------------
+# Data loading: twitter-splits asset is the single source of truth.
+# ---------------------------------------------------------------------------
+
+
+def download_split_from_asset(
+    filename: str,
+    resource_group: str,
+    workspace: str,
+    subscription_id: str | None,
+    data_name: str = DEFAULT_DATA_NAME,
+    data_version: str = DEFAULT_DATA_VERSION,
+    dest_path: str | None = None,
+) -> str:
+    """Download one CSV from the ``twitter-splits`` data asset.
+
+    Same approach as ``infra/scripts/read_remote_data.py``: resolve the
+    datastore via ``MLClient``, then read the blob directly with
+    ``azure-storage-blob`` (bypasses ``azureml-fsspec`` browser login).
+
+    Returns the local path the CSV was written to (``dest_path`` or a path
+    inside the system temp dir).
+    """
+    try:
+        from azure.ai.ml import MLClient
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import BlobClient
+    except ImportError as e:
+        raise click.ClickException(
+            "Azure packages are required to load from the data asset "
+            "(pip install -e '.[llm,dev]')."
+        ) from e
+
+    if not subscription_id:
+        raise click.ClickException(
+            "Missing --subscription-id / $AZURE_SUBSCRIPTION_ID."
+        )
+    credential = DefaultAzureCredential()
+    ml_client = MLClient(credential, subscription_id, resource_group, workspace)
+
+    asset = ml_client.data.get(name=data_name, version=data_version)
+    match = re.search(r"/datastores/([^/]+)/paths/(.*)", asset.path)
+    if not match:
+        raise click.ClickException(
+            f"Could not parse datastore from data asset path: {asset.path!r}"
+        )
+    datastore_name, prefix = match.groups()
+
+    ds = ml_client.datastores.get(datastore_name)
+    container = ds.container_name
+    endpoint = getattr(ds, "endpoint", None) or "core.windows.net"
+
+    blob_path = f"{prefix.strip('/')}/{filename}" if prefix.strip("/") else filename
+    blob = BlobClient(
+        f"https://{ds.account_name}.blob.{endpoint}",
+        container,
+        blob_path,
+        credential=credential,
+    )
+    content = blob.download_blob().readall()
+
+    if dest_path is None:
+        dest_path = os.path.join(tempfile.gettempdir(), filename)
+    with open(dest_path, "wb") as f:
+        f.write(content)
+    return dest_path
+
+
+def resolve_split_paths(
+    dev_path: str | None,
+    train_path: str | None,
+    splits_dir: str | None,
+    resource_group: str | None,
+    workspace: str | None,
+    subscription_id: str | None,
+    data_name: str,
+    data_version: str,
+) -> tuple[str, str, dict]:
+    """Resolve dev/train CSV paths, preferring the data asset over local files.
+
+    Precedence per split: explicit ``--dev-path``/``--train-path`` >
+    ``--splits-dir`` (``uri_folder`` mount, same as ``infra/jobs/*.yaml``) >
+    direct asset download (``--resource-group``/``--workspace``) > legacy
+    ``data/splits/`` fallback.
+
+    Returns ``(dev_path, train_path, provenance)`` where ``provenance`` records
+    how each split was resolved (logged to MLflow).
+    """
+    provenance: dict = {"data_name": data_name, "data_version": data_version}
+    use_asset = bool(resource_group and workspace)
+
+    def _resolve_one(explicit: str | None, filename: str, label: str) -> str:
+        if explicit:
+            provenance[label] = f"explicit:{explicit}"
+            return explicit
+        if splits_dir:
+            candidate = os.path.join(splits_dir, filename)
+            provenance[label] = f"splits_dir:{candidate}"
+            return candidate
+        if use_asset:
+            dest = os.path.join(tempfile.gettempdir(), filename)
+            download_split_from_asset(
+                filename,
+                resource_group,
+                workspace,
+                subscription_id,
+                data_name,
+                data_version,
+                dest_path=dest,
+            )
+            provenance[label] = f"asset:{data_name}:{data_version}/{filename}"
+            click.echo(f"Downloaded {label} from {data_name}:{data_version} -> {dest}")
+            return dest
+        legacy = LEGACY_DEV_PATH if label == "dev" else LEGACY_TRAIN_PATH
+        provenance[label] = f"legacy:{legacy}"
+        click.echo(
+            f"Warning: using legacy local {label} path {legacy}; prefer "
+            "--splits-dir or --resource-group/--workspace (data asset).",
+            err=True,
+        )
+        return legacy
+
+    resolved_dev = _resolve_one(dev_path, "tweets_dev.csv", "dev")
+    resolved_train = _resolve_one(train_path, "tweets_train.csv", "train")
+    return resolved_dev, resolved_train, provenance
+
+
+def read_split_csv(path: str, label: str) -> "pd.DataFrame":
+    """Read a resolved split CSV, raising a Click error when missing."""
+    if not os.path.exists(path):
+        raise click.ClickException(f"{label} file not found: {path}")
+    return pd.read_csv(path)
 
 
 def _setup_mlflow_tracking() -> None:
@@ -623,11 +775,31 @@ def collect_batch_predictions(
 
 @click.command()
 @click.option(
-    "--dev-path", default="data/splits/tweets_dev.csv", help="Path to dev CSV"
+    "--dev-path", default=None, help="Path to dev CSV (overrides --splits-dir/asset)"
 )
 @click.option(
-    "--train-path", default="data/splits/tweets_train.csv", help="Path to train CSV"
+    "--train-path",
+    default=None,
+    help="Path to train CSV (overrides --splits-dir/asset)",
 )
+@click.option(
+    "--splits-dir",
+    default=None,
+    type=click.Path(exists=False, file_okay=False),
+    help="Mounted twitter-splits uri_folder (e.g. ${{inputs.splits}}); "
+    "contains tweets_dev.csv / tweets_train.csv",
+)
+@click.option(
+    "--resource-group", default=None, help="Azure resource group (asset load)"
+)
+@click.option("--workspace", default=None, help="Azure ML workspace (asset load)")
+@click.option(
+    "--subscription-id",
+    default=lambda: os.environ.get("AZURE_SUBSCRIPTION_ID"),
+    help="Azure subscription id (defaults to $AZURE_SUBSCRIPTION_ID)",
+)
+@click.option("--data-name", default=DEFAULT_DATA_NAME, show_default=True)
+@click.option("--data-version", default=DEFAULT_DATA_VERSION, show_default=True)
 @click.option("--model", default=DEFAULT_MODEL, help="Model name for OpenAI API")
 @click.option(
     "--base-url",
@@ -701,6 +873,12 @@ def collect_batch_predictions(
 def main(
     dev_path,
     train_path,
+    splits_dir,
+    resource_group,
+    workspace,
+    subscription_id,
+    data_name,
+    data_version,
     model,
     base_url,
     encoding,
@@ -717,6 +895,19 @@ def main(
     workdir,
 ):
     """LLM baseline: few-shot sentiment + valence via OpenAI Batch API on dev set."""
+    dev_path, train_path, provenance = resolve_split_paths(
+        dev_path,
+        train_path,
+        splits_dir,
+        resource_group,
+        workspace,
+        subscription_id,
+        data_name,
+        data_version,
+    )
+    if splits_dir and not os.path.isdir(splits_dir):
+        raise click.ClickException(f"--splits-dir not found: {splits_dir}")
+
     # --estimate-tokens path
     if estimate_tokens:
         estimate_token_counts(dev_path, encoding)
@@ -733,9 +924,7 @@ def main(
     dev_counts = None
     enc = get_encoding(encoding)
     if batch_id is None:
-        if not os.path.exists(dev_path):
-            raise click.ClickException(f"Dev file not found: {dev_path}")
-        df_dev = pd.read_csv(dev_path)
+        df_dev = read_split_csv(dev_path, "Dev")
         if "text" not in df_dev.columns:
             raise click.ClickException("Dev CSV missing 'text' column")
 
@@ -837,6 +1026,11 @@ def main(
                 "encoding": encoding,
                 "dev_path": dev_path,
                 "train_path": train_path,
+                "splits_dir": splits_dir or "",
+                "data_name": provenance.get("data_name", ""),
+                "data_version": provenance.get("data_version", ""),
+                "dev_source": provenance.get("dev", ""),
+                "train_source": provenance.get("train", ""),
                 "base_url": base_url
                 or os.getenv("OPENAI_BASE_URL")
                 or os.getenv("OPENAI_API_BASE")
