@@ -1,38 +1,69 @@
 # Single source of truth for gateway tools.
-# Adding a command = append an entry here. No new Dockerfile/service.
+# Adding a command = append an entry here. No server.py change needed.
 # creds: env vars the broker passes to this tool ONLY (least-privilege).
 # Secrets come from compose env_file; agent container never sees them.
+#
+# Every tool takes full argv (incl. executable), e.g.
+#   azml_job_submit(argv=["az", "ml", "job", "create", "--file", "job.yaml"])
+# Schema per tool:
+#   name, description, creds, needs_az_login, base_argv (enforced prefix),
+#   help_argv ([--help]), argv_allow_regex (catch-all over trailing args),
+#   params: [{name|--names (flag tokens), allow_regex (on the value),
+#             default/default_from (appended when flag absent), default_flag}].
+# Unlisted flags and positionals are allowed (globals only).
 defaults:
   resource_group: rg-twitter-ml
   workspace: mlw-twitter-sentiment
 
 tools:
-  - name: gh
-    description: GitHub CLI passthrough (constrained subcommands).
+  - name: gh_pr
+    description: GitHub CLI passthrough for pr subcommands.
     creds: [GITHUB_TOKEN]
-    base_argv: [gh]
-    # Only these first-arg subcommands are allowed in v1.
-    allow_subcommands: [issue, pr, repo, run, search, auth]
+    base_argv: [gh, pr]
+
+  - name: gh_auth
+    description: GitHub CLI passthrough for auth subcommands.
+    creds: [GITHUB_TOKEN]
+    base_argv: [gh, auth]
 
   - name: azml_job_submit
     description: Submit any AML yaml job file (generic, not tied to infra/jobs).
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
     needs_az_login: true
     base_argv: [az, ml, job, create]
+    params:
+      - names: [-g, --resource-group]
+        allow_regex: "^rg-[a-z0-9-]+$"
+        default_from: resource_group
+        default_flag: -g
+      - names: [-w, --workspace]
+        allow_regex: "^[a-zA-Z0-9][a-zA-Z0-9_-]{1,60}$"
+        default_from: workspace
+        default_flag: -w
 
   - name: azml_job_list
     description: List AML jobs in the workspace.
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
     needs_az_login: true
     base_argv: [az, ml, job, list]
+    params:
+      - names: [-g, --resource-group]
+        allow_regex: "^rg-[a-z0-9-]+$"
+        default_from: resource_group
+        default_flag: -g
+      - names: [-w, --workspace]
+        allow_regex: "^[a-zA-Z0-9][a-zA-Z0-9_-]{1,60}$"
+        default_from: workspace
+        default_flag: -w
 
   - name: azcopy
     description: AzCopy passthrough constrained to blob storage URLs.
     creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
     needs_az_login: true
     base_argv: [azcopy]
+    argv_allow_regex: "^(https://.*\\.blob\\.core\\.windows\\.net/.*|[^:]+)$"
 
   - name: runpodctl_pod_create
-    description: Create a RunPod pod with validated --options passthrough.
+    description: Create a RunPod pod with passthrough options.
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, pod, create]
