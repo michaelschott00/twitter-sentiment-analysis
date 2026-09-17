@@ -43,18 +43,19 @@ class TransformerEncoder(nn.Module):
         pooling: Literal["cls", "mean", "last"] = "cls",
         freeze: bool = False,
         reset_last: int = None,
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
 
         self.config = AutoConfig.from_pretrained(name)
-        if ("roberta" in name) or ("sentence-transformers" in name):
-            self.encoder = AutoModel.from_pretrained(
-                name, add_pooling_layer=False, config=self.config
-            )  # use cls token as embedding so don't pool!!
-        else:
-            self.encoder = AutoModel.from_pretrained(name, config=self.config)
+        self.encoder = AutoModel.from_pretrained(name, config=self.config)
 
         self.tokenizer = AutoTokenizer.from_pretrained(name, model_max_length=512)
+
+        if gradient_checkpointing and hasattr(
+            self.encoder, "gradient_checkpointing_enable"
+        ):
+            self.encoder.gradient_checkpointing_enable()
 
         # match the pooling method to the model
         if pooling == "cls":
@@ -69,17 +70,51 @@ class TransformerEncoder(nn.Module):
             raise ValueError(f"Pooling method {pooling} not supported.")
 
         if reset_last:
-            for layer in self.encoder.encoder.layer[-reset_last:]:
+            for layer in self._encoder_layers()[-reset_last:]:
                 layer.apply(self.encoder._init_weights)
 
         if freeze:
-            self.freeze(list(range(len(self.encoder.encoder.layer))))
+            self.freeze(list(range(len(self._encoder_layers()))))
+
+    def _encoder_layers(self):
+        """Return the backbone's transformer layers across architectures.
+
+        BERT/RoBERTa/BERTweet/DeBERTa expose them as
+        ``encoder.encoder.layer`` (DeBERTaV2/V3: ``encoder.layer`` also
+        resolves via the same path), while ModernBERT uses
+        ``encoder.layers``.
+        """
+        candidates = [
+            ("encoder", "layer"),
+            ("encoder", "encoder", "layer"),
+            ("layers",),
+            ("layer",),
+        ]
+        for path in candidates:
+            obj = self.encoder
+            try:
+                for attr in path:
+                    obj = getattr(obj, attr)
+            except AttributeError:
+                continue
+            if isinstance(obj, (list, tuple)) or hasattr(obj, "__len__"):
+                try:
+                    if len(obj) > 0:
+                        return obj
+                except TypeError:
+                    continue
+        raise AttributeError(
+            f"Could not locate transformer layers in {type(self.encoder).__name__} "
+            "for freeze/reset; supported paths: encoder.layer, "
+            "encoder.encoder.layer, layers."
+        )
 
     def freeze(self, layers: list[int], unfreeze: bool = False):
         """Freezes the given layers."""
-        for i in range(len(self.encoder.encoder.layer)):
+        encoder_layers = self._encoder_layers()
+        for i in range(len(encoder_layers)):
             if i in layers:
-                for param in self.encoder.encoder.layer[i].parameters():
+                for param in encoder_layers[i].parameters():
                     param.requires_grad = unfreeze
 
     def forward(self, input_ids, attention_mask):

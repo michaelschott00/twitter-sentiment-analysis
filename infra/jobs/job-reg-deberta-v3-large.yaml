@@ -1,0 +1,23 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+command: >-
+  python -m twitter.main
+    --config configs/tasks/regression.yaml
+    --config configs/encoders/deberta_v3_large.yaml
+    data.init_args.root_dir=${{inputs.splits}}
+    trainer.logger.class_path=lightning.pytorch.loggers.MLFlowLogger
+    trainer.logger.init_args.experiment_name=twitter-reg
+    trainer.logger.init_args.tracking_uri=${{env.MLFLOW_TRACKING_URI}}
+    trainer.max_epochs=10
+code: ../..
+inputs:
+  splits:
+    type: uri_folder
+    path: azureml:twitter-splits:1
+environment: azureml:twitter-ml-env:2
+compute: azureml:cluster-gpu-spot
+experiment_name: twitter-sentiment
+display_name: deberta-v3-large-reg-run
+outputs:
+  model_dir:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/models/deberta-v3-large-reg/${{name}}/

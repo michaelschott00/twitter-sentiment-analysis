@@ -4,7 +4,7 @@ import torch
 from twitter import data, models, modules
 
 batch_size = 4
-model_name = "distilbert-base-cased"
+model_name = "sentence-transformers/bert-base-nli-mean-tokens"
 encoder = models.TransformerEncoder(name=model_name)
 module = modules.SupervisedConstrastiveLearningModule(encoder=encoder)
 data_module = data.TwitterDataModule(

@@ -148,7 +148,7 @@ All resources in **one resource group** for cost visibility + easy teardown (lea
 | Cluster | VM Size | vCPU / RAM / GPU | When to use |
 | ------- | ------- | ---------------- | ----------- |
 | `cluster-cpu` (Terraform, dedicated) | `Standard_DS3_v2` | 4 / 14GB / — | `lightgbm` TF-IDF baseline, data validation, small CPU smoke tests |
-| RunPod pod (external, not Terraform) | e.g. RTX A4000 / 4090 / A5000, 1× GPU | varies / ≥24GB GPU mem preferred | `sentence-bert`, `distilbert`, `twihn` (~110-250M params) fine-tune batch 8-16; larger models on bigger RunPod GPU |
+| RunPod pod (external, not Terraform) | e.g. RTX A4000 / 4090 / A5000, 1× GPU | varies / ≥24GB GPU mem preferred | `bertweet-large` (355M), `deberta-v3-large` (435M), `ModernBERT-large` (395M) + legacy `sentence-bert-base` (110M) fine-tune batch 8 with bf16 + gradient checkpointing; tweets average <50 tokens so real VRAM is well below the 8x512 worst case |
 
 *Rule:* Azure cluster uses `scale_settings { min_node_count=0, max=2, scale_down_nodes_after_idle_duration=PT5M }`. We skip VNet plumbing, so `node_public_ip_enabled` stays at its default `true`. Compute SKU is controlled by `var.compute_vm_size` (default `Standard_DS3_v2`, dedicated) and applied through HCP; note that `vm_size`/`vm_priority` are force-new, so changing either destroys and recreates the cluster. RunPod pods are ephemeral: start → train → push artifacts to Azure → stop; never leave idle.
 
@@ -459,9 +459,9 @@ ml_client.jobs.stream(job.name)
 
 | Task                | Config pair                                       | Where                  | Metrics                                           |
 | ------------------- | ------------------------------------------------- | ---------------------- | ------------------------------------------------- |
-| `clf`               | `classification.yaml` + `sentence_bert_base.yaml` | RunPod GPU (§7.4)      | `MulticlassF1Score` (macro), `MulticlassAccuracy` |
-| `reg`               | `regression.yaml` + `sentence_bert_base.yaml`     | RunPod GPU (§7.4)      | `MeanSquaredError` (RMSE)                         |
-| `multitask`         | `multitask.yaml` + `sentence_bert_base.yaml`      | RunPod GPU (§7.4)      | both — `loss_weight` logged to MLflow             |
+| `clf`               | `classification.yaml` + `bertweet_large.yaml` / `deberta_v3_large.yaml` / `modernbert_large.yaml` (`sentence_bert_base.yaml` legacy anchor) | RunPod GPU (§7.4)      | `MulticlassF1Score` (macro), `MulticlassAccuracy` |
+| `reg`               | `regression.yaml` + `bertweet_large.yaml` / `deberta_v3_large.yaml` / `modernbert_large.yaml`     | RunPod GPU (§7.4)      | `MeanSquaredError` (RMSE)                         |
+| `multitask`         | `multitask.yaml` + `bertweet_large.yaml` / `deberta_v3_large.yaml` / `modernbert_large.yaml`      | RunPod GPU (§7.4)      | both — `loss_weight` logged to MLflow             |
 | `lightgbm` baseline | `twitter/baselines/lightgbm_baseline.py` + TF-IDF | `cluster-cpu` (Azure)  | Macro F1 / RMSE                                   |
 | `llm` baseline      | `llm_baseline.py` (calls Foundry)                 | `cluster-cpu` or local | No training — skip AML                            |
 
@@ -488,7 +488,7 @@ Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod 
    ```bash
    python -m twitter.main \
      --config configs/tasks/classification.yaml \
-     --config configs/encoders/sentence_bert_base.yaml \
+     --config configs/encoders/bertweet_large.yaml \
      data.init_args.root_dir=./data/splits \
      trainer.logger.class_path=lightning.pytorch.loggers.MLFlowLogger \
      trainer.logger.init_args.experiment_name=twitter-clf \
@@ -513,7 +513,7 @@ Artifacts to log per run:
 - Metrics CSV + confusion matrix PNG + `lightning_logs/` summary
 - `requirements.txt` hash for reproducibility
 
-Naming: `twitter-{encoder}-{task}:{version}` e.g., `twitter-sbert-clf:2`, tags `macro_f1=0.79`, `rmse=0.21`, `encoder=sentence-transformers/all-MiniLM-L6-v2`.
+Naming: `twitter-{encoder}-{task}:{version}` e.g., `twitter-bertweet-large-clf:1`, tags `macro_f1=0.79`, `rmse=0.21`, `encoder=vinai/bertweet-large`.
 
 ---
 

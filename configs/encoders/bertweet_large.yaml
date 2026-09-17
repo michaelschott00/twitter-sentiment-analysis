@@ -4,7 +4,8 @@ model:
     encoder:
       class_path: twitter.models.TransformerEncoder
       init_args:
-        name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
-        pooling: "cls"
-    lr: {"encoder": 3e-5, "head": 3e-4}
+        name: "vinai/bertweet-large"
+        pooling: "mean"
+        gradient_checkpointing: true
+    lr: {"encoder": 1.0e-05, "head": 3.0e-04}
     weight_decay: 0.01

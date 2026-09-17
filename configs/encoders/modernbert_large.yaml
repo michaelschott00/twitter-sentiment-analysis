@@ -4,7 +4,8 @@ model:
     encoder:
       class_path: twitter.models.TransformerEncoder
       init_args:
-        name: "pig4431/TweetEval_XLNET_5E"
-        pooling: "last"
-    lr: {"encoder": 3e-5, "head": 3e-4}
+        name: "answerdotai/ModernBERT-large"
+        pooling: "cls"
+        gradient_checkpointing: true
+    lr: {"encoder": 1.0e-05, "head": 3.0e-04}
     weight_decay: 0.01

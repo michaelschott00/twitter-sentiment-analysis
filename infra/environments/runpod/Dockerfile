@@ -29,7 +29,7 @@ COPY ./configs ./configs
 # passed in (defaults to `python -m twitter.main --help`), so the image
 # can be used for arbitrary LightningCLI runs, e.g.:
 #   python -m twitter.main --config configs/tasks/classification.yaml \
-#       --config configs/encoders/sentence_bert_base.yaml
+#       --config configs/encoders/bertweet_large.yaml
 # After a real (non-default) run finishes, the pod stops itself via
 # `runpodctl stop pod $RUNPOD_POD_ID` since RunPod does not tear the
 # pod down automatically when the script exits. Set RUNPOD_AUTO_STOP=0
@@ -47,7 +47,7 @@ fi
 # Default to showing LightningCLI help so the container does not exit
 # immediately when no command is given. Override with any Lightning run,
 # e.g.: python -m twitter.main --config configs/tasks/classification.yaml \
-#   --config configs/encoders/sentence_bert_base.yaml
+#   --config configs/encoders/bertweet_large.yaml
 AUTO_STOP=1
 if [ "$#" -eq 0 ]; then
   set -- python -m twitter.main --help
