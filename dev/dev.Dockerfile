@@ -23,10 +23,12 @@ ARG ML_EXTENSION_VERSION=2.44.1
 #   id=tflint-plugins-dev  /var/cache/tflint-plugins  tflint plugin downloads
 #   id=nltk-dev        /var/cache/nltk           nltk data downloads
 
-# Install basic utils
+# Install basic utils (+ build-essential so source distributions like the
+# regular `fasttext` package, which contains C++ extensions, can be compiled
+# during `pip install`)
 RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt,sharing=locked \
     apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git unzip \
+    && apt-get install -y --no-install-recommends curl ca-certificates libgomp1 git unzip build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install opencode (cache the final binary; the installer otherwise re-downloads

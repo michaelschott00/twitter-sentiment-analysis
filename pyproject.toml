@@ -60,6 +60,7 @@ llm = [
 ]
 # Local development / analysis tooling only.
 dev = [
+    "fasttext==0.9.3",
     "seaborn==0.13.2",
     "gradio==6.27.0",
     "requests==2.34.2",
