@@ -24,9 +24,13 @@ class SCLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, z, labels):
-        logits = torch.matmul(z, z.T)  # pairwise dot products
+        logits = torch.matmul(z, z.mT)  # pairwise dot products
         logits /= self.temperature
-        label_mask = torch.matmul(labels.float(), labels.float().T).bool()
+        lab = labels.float()
+        # .T is deprecated for >2-D tensors and .mT errors on 1-D; the SCL
+        # pretraining path passes 1-D class indices (where old .T was a no-op).
+        lab_T = lab.mT if lab.dim() >= 2 else lab
+        label_mask = torch.matmul(lab, lab_T).bool()
 
         # for numerical stability, subtract max
         with torch.no_grad():

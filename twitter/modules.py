@@ -93,6 +93,7 @@ class _BaseModule(pl.LightningModule):
             state_dict = torch.load(
                 checkpoint,
                 map_location="cpu" if not torch.cuda.is_available() else "cuda",
+                weights_only=True,
             )
             state_dict_fixed = dict()
             for key, val in state_dict["state_dict"].items():
@@ -101,6 +102,21 @@ class _BaseModule(pl.LightningModule):
         self.encoder = encoder
 
         self.high_confidence_errors = []
+
+    def _log_safe(self, *args, **kwargs):
+        """Call ``self.log`` only when attached to a Trainer.
+
+        Unit tests invoke ``training_step``/``validation_step`` directly on a
+        bare module, where ``self.log`` emits "trainer reference is not
+        registered" warnings. Guarding on the internal trainer reference
+        keeps real training behavior unchanged while silencing that warning.
+        """
+        if getattr(self, "_trainer", None) is not None:
+            self.log(*args, **kwargs)
+
+    def _log_dict_safe(self, *args, **kwargs):
+        if getattr(self, "_trainer", None) is not None:
+            self.log_dict(*args, **kwargs)
 
     def update_high_confidence_errors(self, input_ids, logits, labels):
         probs = torch.softmax(logits, dim=1)
@@ -262,7 +278,7 @@ class SingleTaskModule(_BaseModule):
         logits = self.forward(batch)
         loss = self.model.loss_func(logits, batch["labels"])
 
-        self.log("loss/train", loss, on_step=True, on_epoch=False)
+        self._log_safe("loss/train", loss, on_step=True, on_epoch=False)
 
         return loss
 
@@ -270,7 +286,7 @@ class SingleTaskModule(_BaseModule):
         logits = self.forward(batch)
         loss = self.model.loss_func(logits, batch["labels"])
 
-        self.log("loss/validation", loss, on_step=False, on_epoch=True)
+        self._log_safe("loss/validation", loss, on_step=False, on_epoch=True)
 
         self.model.metrics.update(logits, batch["labels"])
         if self.hparams.task == "clf":
@@ -282,7 +298,7 @@ class SingleTaskModule(_BaseModule):
         return {"loss": loss, "logits": logits, "labels": batch["labels"]}
 
     def on_validation_epoch_end(self):
-        self.log_dict(self.model.metrics.compute(), on_step=False, on_epoch=True)
+        self._log_dict_safe(self.model.metrics.compute(), on_step=False, on_epoch=True)
         self.model.metrics.reset()
         if self.hparams.task == "clf":
             self.log_confusion_matrix(self.model.val_confmat)
@@ -396,9 +412,11 @@ class MultiTaskModule(_BaseModule):
             reg_logits, clf_logits, reg_labels, clf_labels
         )
 
-        self.log("loss/regression/train", reg_loss, on_step=True, on_epoch=False)
-        self.log("loss/classification/train", clf_loss, on_step=True, on_epoch=False)
-        self.log("loss/train", loss, on_step=True, on_epoch=False)
+        self._log_safe("loss/regression/train", reg_loss, on_step=True, on_epoch=False)
+        self._log_safe(
+            "loss/classification/train", clf_loss, on_step=True, on_epoch=False
+        )
+        self._log_safe("loss/train", loss, on_step=True, on_epoch=False)
 
         return loss
 
@@ -414,11 +432,13 @@ class MultiTaskModule(_BaseModule):
             reg_logits, clf_logits, reg_labels, clf_labels
         )
 
-        self.log("loss/regression/validation", reg_loss, on_step=False, on_epoch=True)
-        self.log(
+        self._log_safe(
+            "loss/regression/validation", reg_loss, on_step=False, on_epoch=True
+        )
+        self._log_safe(
             "loss/classification/validation", clf_loss, on_step=False, on_epoch=True
         )
-        self.log("loss/validation", loss, on_step=False, on_epoch=True)
+        self._log_safe("loss/validation", loss, on_step=False, on_epoch=True)
 
         self.reg.metrics.update(reg_logits, reg_labels)
         self.clf.metrics.update(clf_logits.squeeze(), clf_labels)
@@ -432,8 +452,8 @@ class MultiTaskModule(_BaseModule):
         return loss
 
     def on_validation_epoch_end(self):
-        self.log_dict(self.reg.metrics.compute())
-        self.log_dict(self.clf.metrics.compute())
+        self._log_dict_safe(self.reg.metrics.compute())
+        self._log_dict_safe(self.clf.metrics.compute())
         self.reg.metrics.reset()
         self.clf.metrics.reset()
         self.log_confusion_matrix(self.clf.val_confmat)
@@ -472,6 +492,10 @@ class SimCSEModule(pl.LightningModule):
         self.softmax = nn.Softmax(dim=0)  # softmax goes over batch dimension
         self.encoder = encoder
 
+    def _log_safe(self, *args, **kwargs):
+        if getattr(self, "_trainer", None) is not None:
+            self.log(*args, **kwargs)
+
     def loss_func(self, x1, x2):
         n, d = x1.shape
         x1 = x1.expand((n, n, d))
@@ -484,7 +508,7 @@ class SimCSEModule(pl.LightningModule):
         x2 = self.encoder(batch["input_ids"], batch["attention_mask"])
         loss = self.loss_func(x1, x2)
 
-        self.log("loss/train", loss)
+        self._log_safe("loss/train", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -492,7 +516,7 @@ class SimCSEModule(pl.LightningModule):
         x2 = self.encoder(batch["input_ids"], batch["attention_mask"])
         loss = self.loss_func(x1, x2)
 
-        self.log("loss/validation", loss, on_step=False, on_epoch=True)
+        self._log_safe("loss/validation", loss, on_step=False, on_epoch=True)
         return loss
 
     def configure_optimizers(self):
@@ -518,21 +542,25 @@ class SupervisedConstrastivePretrainingModule(pl.LightningModule):
     ):
         super().__init__()
 
-        self.save_hyperparameters(ignore="encoder")
+        self.save_hyperparameters(ignore=["encoder", "projector"])
         self.encoder = SupervisedContrastiveEncoder(
             encoder=encoder, projector=projector
         )
 
+    def _log_safe(self, *args, **kwargs):
+        if getattr(self, "_trainer", None) is not None:
+            self.log(*args, **kwargs)
+
     def training_step(self, batch, batch_idx):
         z = self.encoder(batch["input_ids"], batch["attention_mask"])
         loss = self.encoder.loss_func(z, batch["labels"])
-        self.log("loss/train", loss)
+        self._log_safe("loss/train", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         z = self.encoder(batch["input_ids"], batch["attention_mask"])
         loss = self.encoder.loss_func(z, batch["labels"])
-        self.log("loss/validation", loss, on_step=False, on_epoch=True)
+        self._log_safe("loss/validation", loss, on_step=False, on_epoch=True)
         return loss
 
     def configure_optimizers(self):
@@ -589,14 +617,14 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
     def training_step(self, batch, batch_idx):
         embeddings, logits = self.model(batch["input_ids"], batch["attention_mask"])
         loss = self.loss_func(embeddings, logits, batch["labels"])
-        self.log("loss/train", loss, on_step=True, on_epoch=False)
+        self._log_safe("loss/train", loss, on_step=True, on_epoch=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
         embeddings, logits = self.model(batch["input_ids"], batch["attention_mask"])
         loss = self.loss_func(embeddings, logits, batch["labels"])
 
-        self.log("loss/validation", loss, on_step=False, on_epoch=True)
+        self._log_safe("loss/validation", loss, on_step=False, on_epoch=True)
 
         self.model.metrics.update(logits, batch["labels"])
         self.model.val_confmat.update(logits, batch["labels"])
@@ -605,7 +633,7 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
         return loss
 
     def on_validation_epoch_end(self):
-        self.log_dict(self.model.metrics.compute(), on_step=False, on_epoch=True)
+        self._log_dict_safe(self.model.metrics.compute(), on_step=False, on_epoch=True)
         self.model.metrics.reset()
         self.log_confusion_matrix(self.model.val_confmat)
         self.log_high_confidence_errors()

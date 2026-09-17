@@ -1,27 +1,537 @@
+"""CPU-only smoke + unit tests for twitter.modules.
+
+Goal: catch bugs locally before submitting full training runs to RunPod.
+Uses the tiny ``hf-internal-testing/tiny-random-bert`` backbone (5 layers,
+hidden size 32) and synthetic batches, so the whole file runs in ~1 min
+on a CPU-only machine with no real dataset needed.
+
+Run with: ``pytest twitter/tests/modules.py -v``
+"""
+
+import os
+import tempfile
+import unittest
+
 import lightning.pytorch as pl
 import torch
 
-from twitter import data, models, modules
+from twitter import models, modules
 
-batch_size = 4
-model_name = "sentence-transformers/bert-base-nli-mean-tokens"
-encoder = models.TransformerEncoder(name=model_name)
-module = modules.SupervisedConstrastiveLearningModule(encoder=encoder)
-data_module = data.TwitterDataModule(
-    root_dir="data/splits",
-    features="contrast",
-    labels="clf",
-    encoder_name=model_name,
-    batch_size=batch_size,
-)
+TINY = "hf-internal-testing/tiny-random-bert"
+SEQ_LEN = 8
+BATCH = 4
+N_LAYERS = 5  # tiny-random-bert has 5 hidden layers
 
-# auto-select accelerator (gpu if available, else cpu)
-accelerator = "cuda" if torch.cuda.is_available() else "cpu"
 
-# fast dev run
-trainer = pl.Trainer(accelerator=accelerator, fast_dev_run=True)
-trainer.fit(module, data_module)
+def make_encoder(**kwargs):
+    kwargs.setdefault("name", TINY)
+    return models.TransformerEncoder(**kwargs)
 
-# overfit a small batch
-trainer = pl.Trainer(accelerator=accelerator, overfit_batches=0.01)
-trainer.fit(module, data_module)
+
+def _rand_ids(batch=BATCH, seq=SEQ_LEN, vocab=1000):
+    return torch.randint(0, vocab, (batch, seq))
+
+
+def clf_batch(batch=BATCH, seq=SEQ_LEN, n_classes=3):
+    return {
+        "input_ids": _rand_ids(batch, seq),
+        "attention_mask": torch.ones(batch, seq, dtype=torch.long),
+        "labels": torch.randint(0, n_classes, (batch,)),
+    }
+
+
+def reg_batch(batch=BATCH, seq=SEQ_LEN):
+    return {
+        "input_ids": _rand_ids(batch, seq),
+        "attention_mask": torch.ones(batch, seq, dtype=torch.long),
+        "labels": torch.rand(batch) * 2 - 1,  # compound score in [-1, 1]
+    }
+
+
+def multitask_batch(batch=BATCH, seq=SEQ_LEN):
+    return {
+        "input_ids": _rand_ids(batch, seq),
+        "attention_mask": torch.ones(batch, seq, dtype=torch.long),
+        # collate_fn stacks (compound, sentiment) as float32
+        "labels": torch.stack(
+            [
+                torch.rand(batch) * 2 - 1,
+                torch.randint(0, 3, (batch,)).float(),
+            ],
+            dim=1,
+        ),
+    }
+
+
+class _DummyDataModule(pl.LightningDataModule):
+    """Minimal datamodule yielding synthetic batches (no tokenizer, no CSVs)."""
+
+    def __init__(self, batch_fn=clf_batch, n_batches=4):
+        super().__init__()
+        self.batch_fn = batch_fn
+        self.n_batches = n_batches
+
+    def _loader(self):
+        data = [self.batch_fn() for _ in range(self.n_batches)]
+
+        def gen():
+            yield from data
+
+        return gen()
+
+    def train_dataloader(self):
+        return self._loader()
+
+    def val_dataloader(self):
+        return self._loader()
+
+
+def _cpu_trainer(**kwargs):
+    kwargs.setdefault("accelerator", "cpu")
+    kwargs.setdefault("devices", 1)
+    kwargs.setdefault("logger", False)
+    kwargs.setdefault("enable_checkpointing", False)
+    kwargs.setdefault("enable_progress_bar", False)
+    kwargs.setdefault("enable_model_summary", False)
+    return pl.Trainer(**kwargs)
+
+
+class EncoderFreezeTests(unittest.TestCase):
+    def test_freeze_sets_requires_grad_false(self):
+        enc = make_encoder()
+        enc.freeze(layers=[0, 2])
+        layers = enc._encoder_layers()
+        for i, layer in enumerate(layers):
+            for p in layer.parameters():
+                self.assertEqual(p.requires_grad, i not in (0, 2))
+
+    def test_unfreeze_restores_requires_grad(self):
+        enc = make_encoder()
+        enc.freeze(layers=[0, 1])
+        enc.freeze(layers=[0], unfreeze=True)
+        layers = enc._encoder_layers()
+        for p in layers[0].parameters():
+            self.assertTrue(p.requires_grad)
+        for p in layers[1].parameters():
+            self.assertFalse(p.requires_grad)
+
+    def test_freeze_cfg_applied_at_epoch_end(self):
+        enc = make_encoder()
+        module = modules.SingleTaskModule(
+            encoder=enc, task="clf", freeze_cfg={0: [0, 1]}, scheduler=None
+        )
+        module.on_train_epoch_end()  # current_epoch == 0
+        layers = enc._encoder_layers()
+        for i in (0, 1):
+            for p in layers[i].parameters():
+                self.assertFalse(p.requires_grad)
+        for p in layers[2].parameters():
+            self.assertTrue(p.requires_grad)
+
+    def test_unfreeze_cfg_applied_at_epoch_end(self):
+        enc = make_encoder(freeze=True)
+        layers = enc._encoder_layers()
+        for layer in layers:
+            for p in layer.parameters():
+                self.assertFalse(p.requires_grad)
+        module = modules.SingleTaskModule(
+            encoder=enc, task="clf", unfreeze_cfg={0: [0]}, scheduler=None
+        )
+        module.on_train_epoch_end()
+        for p in layers[0].parameters():
+            self.assertTrue(p.requires_grad)
+        for p in layers[1].parameters():
+            self.assertFalse(p.requires_grad)
+
+    def test_no_cfg_leaves_grad_flags_untouched(self):
+        enc = make_encoder()
+        before = [p.requires_grad for p in enc.parameters()]
+        module = modules.SingleTaskModule(encoder=enc, task="clf", scheduler=None)
+        module.on_train_epoch_end()
+        after = [p.requires_grad for p in enc.parameters()]
+        self.assertEqual(before, after)
+
+    def test_frozen_params_get_no_grad(self):
+        enc = make_encoder()
+        enc.freeze(layers=[0])
+        module = modules.SingleTaskModule(encoder=enc, task="clf", scheduler=None)
+        batch = clf_batch()
+        loss = module.training_step(batch, 0)
+        loss.backward()
+        layers = enc._encoder_layers()
+        for p in layers[0].parameters():
+            self.assertIsNone(p.grad)
+        self.assertTrue(any(p.grad is not None for p in layers[-1].parameters()))
+
+
+class CheckpointTests(unittest.TestCase):
+    def _perturb(self, encoder):
+        with torch.no_grad():
+            for p in encoder.encoder.parameters():
+                p.fill_(0.1234)
+                break
+
+    def _encoder_weights(self, module):
+        # NOTE: the `checkpoint` arg intentionally restores encoder weights
+        # only (see _BaseModule.__init__); heads stay freshly initialized.
+        return {
+            k: v.cpu()
+            for k, v in module.state_dict().items()
+            if "encoder.encoder." in k or k.startswith("encoder.encoder.")
+        }
+
+    def test_checkpoint_weights_loaded_when_provided(self):
+        enc = make_encoder()
+        self._perturb(enc)
+        src = modules.SingleTaskModule(encoder=enc, task="clf", scheduler=None)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ckpt.pt")
+            torch.save({"state_dict": src.state_dict()}, path)
+            dst = modules.SingleTaskModule(
+                encoder=make_encoder(), task="clf", checkpoint=path, scheduler=None
+            )
+        src_enc, dst_enc = self._encoder_weights(src), self._encoder_weights(dst)
+        self.assertTrue(len(src_enc) > 0)
+        self.assertEqual(set(src_enc), set(dst_enc))
+        for k in src_enc:
+            self.assertTrue(torch.equal(src_enc[k], dst_enc[k]), f"mismatch at {k}")
+
+    def test_checkpoint_does_not_restore_heads(self):
+        """Documents the contract: `checkpoint` restores the encoder, while
+        heads are always freshly initialized (prevents silently reusing a
+        stale head from another task)."""
+        enc = make_encoder()
+        self._perturb(enc)
+        src = modules.SingleTaskModule(encoder=enc, task="clf", scheduler=None)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ckpt.pt")
+            torch.save({"state_dict": src.state_dict()}, path)
+            dst = modules.SingleTaskModule(
+                encoder=make_encoder(), task="clf", checkpoint=path, scheduler=None
+            )
+        heads_src = {k: v.cpu() for k, v in src.state_dict().items() if "head" in k}
+        heads_dst = {k: v.cpu() for k, v in dst.state_dict().items() if "head" in k}
+        self.assertEqual(set(heads_src), set(heads_dst))
+        self.assertTrue(
+            any(not torch.equal(heads_src[k], heads_dst[k]) for k in heads_src)
+        )
+
+    def test_no_checkpoint_means_pretrained_weights_kept(self):
+        enc = make_encoder()
+        self._perturb(enc)
+        src = modules.SingleTaskModule(encoder=enc, task="clf", scheduler=None)
+        fresh = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        diffs = [
+            not torch.equal(v1.cpu(), v2.cpu())
+            for v1, v2 in zip(src.state_dict().values(), fresh.state_dict().values())
+        ]
+        self.assertTrue(any(diffs), "perturbed weights should differ from fresh ones")
+
+    def test_checkpoint_roundtrip_multitask(self):
+        enc = make_encoder()
+        self._perturb(enc)
+        src = modules.MultiTaskModule(encoder=enc, task="clf", scheduler=None)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ckpt.pt")
+            torch.save({"state_dict": src.state_dict()}, path)
+            dst = modules.MultiTaskModule(
+                encoder=make_encoder(), task="clf", checkpoint=path, scheduler=None
+            )
+        src_enc, dst_enc = self._encoder_weights(src), self._encoder_weights(dst)
+        self.assertTrue(len(src_enc) > 0)
+        self.assertEqual(set(src_enc), set(dst_enc))
+        for k in src_enc:
+            self.assertTrue(torch.equal(src_enc[k], dst_enc[k]), f"mismatch at {k}")
+
+
+class MultiTaskLossWeightTests(unittest.TestCase):
+    def test_none_triggers_uncertainty_weighting(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=None, scheduler=None
+        )
+        self.assertTrue(module.use_uncertainty_weighting)
+        self.assertTrue(hasattr(module, "log_sigma_reg"))
+        self.assertTrue(hasattr(module, "log_sigma_clf"))
+        self.assertIsInstance(module.log_sigma_reg, torch.nn.Parameter)
+        self.assertIsInstance(module.log_sigma_clf, torch.nn.Parameter)
+
+    def test_float_disables_uncertainty_weighting(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=0.7, scheduler=None
+        )
+        self.assertFalse(module.use_uncertainty_weighting)
+        self.assertFalse(hasattr(module, "log_sigma_reg"))
+        self.assertFalse(hasattr(module, "log_sigma_clf"))
+
+    def test_fixed_weight_math(self):
+        w = 0.7
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=w, scheduler=None
+        )
+        reg_loss, clf_loss, total = module.loss_func(
+            torch.tensor([0.5, -0.5]),
+            torch.tensor([[2.0, 0.1, 0.1], [0.1, 0.1, 2.0]]),
+            torch.tensor([0.5, -0.5]),
+            torch.tensor([0, 2]),
+        )
+        expected = w * reg_loss + (1 - w) * clf_loss
+        self.assertAlmostEqual(total.item(), expected.item(), places=5)
+
+    def test_uncertainty_weight_math(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=None, scheduler=None
+        )
+        with torch.no_grad():
+            module.log_sigma_reg.fill_(0.5)
+            module.log_sigma_clf.fill_(-0.5)
+        reg_loss, clf_loss, total = module.loss_func(
+            torch.tensor([0.5, -0.5]),
+            torch.tensor([[2.0, 0.1, 0.1], [0.1, 0.1, 2.0]]),
+            torch.tensor([0.5, -0.5]),
+            torch.tensor([0, 2]),
+        )
+        expected = (
+            torch.exp(torch.tensor(-0.5)) * reg_loss
+            + 0.5
+            + torch.exp(torch.tensor(0.5)) * clf_loss
+            - 0.5
+        )
+        self.assertAlmostEqual(total.item(), expected.item(), places=5)
+
+    def test_uncertainty_sigmas_are_learnable(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=None, scheduler=None
+        )
+        names = {n for n, _ in module.named_parameters()}
+        self.assertIn("log_sigma_reg", names)
+        self.assertIn("log_sigma_clf", names)
+        batch = multitask_batch()
+        reg_logits, clf_logits = module.forward_both(batch)
+        reg_labels, clf_labels = torch.split(batch["labels"], 1, dim=1)
+        _, _, loss = module.loss_func(
+            reg_logits, clf_logits, reg_labels.squeeze(1), clf_labels.squeeze(1).long()
+        )
+        loss.backward()
+        self.assertIsNotNone(module.log_sigma_reg.grad)
+        self.assertIsNotNone(module.log_sigma_clf.grad)
+
+
+class ModuleSmokeTests(unittest.TestCase):
+    def test_single_task_clf_step(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        batch = clf_batch()
+        logits = module.forward(batch)
+        self.assertEqual(tuple(logits.shape), (BATCH, 3))
+        loss = module.training_step(batch, 0)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+
+    def test_single_task_reg_step(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="reg", scheduler=None
+        )
+        batch = reg_batch()
+        out = module.forward(batch)
+        self.assertEqual(tuple(out.shape), (BATCH,))
+        loss = module.training_step(batch, 0)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+
+    def test_multitask_step_and_forward_both(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=0.5, scheduler=None
+        )
+        batch = multitask_batch()
+        reg_logits, clf_logits = module.forward_both(batch)
+        self.assertEqual(tuple(reg_logits.shape), (BATCH,))
+        self.assertEqual(tuple(clf_logits.shape), (BATCH, 3))
+        loss = module.training_step(batch, 0)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+
+    def test_forward_both_single_encoder_pass(self):
+        """Both heads must see the same embeddings (one shared encoder pass)."""
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=0.5, scheduler=None
+        )
+        batch = multitask_batch()
+        calls = []
+
+        orig_forward = module.encoder.forward
+
+        def counting_forward(input_ids, attention_mask):
+            calls.append(1)
+            return orig_forward(input_ids, attention_mask)
+
+        module.encoder.forward = counting_forward
+        module.forward_both(batch)
+        self.assertEqual(len(calls), 1)
+        module.encoder.forward = orig_forward
+
+    def test_simcse_step(self):
+        module = modules.SimCSEModule(encoder=make_encoder(), scheduler=None)
+        batch = clf_batch()
+        loss = module.training_step(batch, 0)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+
+    def test_scl_pretraining_step(self):
+        module = modules.SupervisedConstrastivePretrainingModule(
+            encoder=make_encoder(),
+            projector=models.Projector(hidden_size=32),
+            scheduler=None,
+        )
+        # SCL collate doubles the batch with duplicated labels
+        batch = clf_batch(batch=BATCH * 2)
+        loss = module.training_step(batch, 0)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+
+    def test_scl_learning_step(self):
+        module = modules.SupervisedConstrastiveLearningModule(
+            encoder=make_encoder(), scheduler=None
+        )
+        batch = clf_batch()
+        loss = module.training_step(batch, 0)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+
+
+class OptimizerConfigTests(unittest.TestCase):
+    def test_dict_lr_gives_encoder_head_groups(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(),
+            task="clf",
+            lr={"encoder": 1e-5, "head": 3e-4},
+            scheduler=None,
+        )
+        opt = module.configure_optimizers()
+        self.assertIsInstance(opt, torch.optim.AdamW)
+        self.assertEqual(len(opt.param_groups), 2)
+        self.assertAlmostEqual(opt.param_groups[0]["lr"], 1e-5)
+        self.assertAlmostEqual(opt.param_groups[1]["lr"], 3e-4)
+
+    def test_scalar_lr_gives_single_group(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", lr=1e-3, scheduler=None
+        )
+        opt = module.configure_optimizers()
+        self.assertEqual(len(opt.param_groups), 1)
+
+    def test_multitask_dict_lr_gives_three_groups(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(),
+            task="clf",
+            lr={"encoder": 1e-5, "head": 3e-4},
+            loss_weight=0.5,
+            scheduler=None,
+        )
+        opt = module.configure_optimizers()
+        self.assertEqual(len(opt.param_groups), 3)
+
+    def test_scheduler_none_returns_plain_optimizer(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        self.assertIsInstance(module.configure_optimizers(), torch.optim.Optimizer)
+
+    def test_default_scheduler_returns_dict(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler="linear"
+        )
+        dm = _DummyDataModule()
+        trainer = _cpu_trainer(max_steps=2)
+        trainer.fit(module, dm)  # attaches trainer -> estimated_stepping_batches
+        out = module.configure_optimizers()
+        self.assertIsInstance(out, dict)
+        self.assertIn("lr_scheduler", out)
+
+
+class TrainerIntegrationTests(unittest.TestCase):
+    def test_fast_dev_run_single_task(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        trainer = _cpu_trainer(fast_dev_run=True)
+        trainer.fit(module, _DummyDataModule())
+
+    def test_fast_dev_run_multitask(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(),
+            task="clf",
+            loss_weight=0.5,
+            scheduler=None,
+        )
+        trainer = _cpu_trainer(fast_dev_run=True)
+        trainer.fit(module, _DummyDataModule(batch_fn=multitask_batch))
+
+    def test_fast_dev_run_scl(self):
+        module = modules.SupervisedConstrastiveLearningModule(
+            encoder=make_encoder(), scheduler=None
+        )
+        trainer = _cpu_trainer(fast_dev_run=True)
+        trainer.fit(module, _DummyDataModule())
+
+    def test_freeze_cfg_end_to_end(self):
+        """A 2-epoch CPU run with freeze_cfg must actually freeze layer 0."""
+        enc = make_encoder()
+        module = modules.SingleTaskModule(
+            encoder=enc, task="clf", freeze_cfg={0: [0]}, scheduler=None
+        )
+        trainer = _cpu_trainer(max_epochs=2)
+        trainer.fit(module, _DummyDataModule(n_batches=2))
+        for p in enc._encoder_layers()[0].parameters():
+            self.assertFalse(p.requires_grad)
+
+    def test_checkpoint_save_load_end_to_end(self):
+        enc = make_encoder()
+        module = modules.SingleTaskModule(encoder=enc, task="clf", scheduler=None)
+        trainer = _cpu_trainer(fast_dev_run=True)
+        trainer.fit(module, _DummyDataModule())
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "model.ckpt")
+            trainer.save_checkpoint(path)
+            self.assertTrue(os.path.exists(path))
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
+            before = {
+                k: v.clone()
+                for k, v in modules.SingleTaskModule(
+                    encoder=make_encoder(), task="clf", scheduler=None
+                )
+                .state_dict()
+                .items()
+            }
+            restored = modules.SingleTaskModule.load_from_checkpoint(
+                path, encoder=make_encoder(), task="clf"
+            )
+            for k, v in restored.state_dict().items():
+                self.assertTrue(torch.equal(v.cpu(), ckpt["state_dict"][k].cpu()))
+            self.assertTrue(
+                any(
+                    not torch.equal(v.cpu(), before[k].cpu())
+                    for k, v in restored.state_dict().items()
+                )
+            )
+
+    def test_hparams_survive_checkpoint(self):
+        module = modules.MultiTaskModule(
+            encoder=make_encoder(), task="clf", loss_weight=0.3, scheduler=None
+        )
+        trainer = _cpu_trainer(fast_dev_run=True)
+        trainer.fit(module, _DummyDataModule(batch_fn=multitask_batch))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "model.ckpt")
+            trainer.save_checkpoint(path)
+            restored = modules.MultiTaskModule.load_from_checkpoint(
+                path, encoder=make_encoder()
+            )
+            self.assertAlmostEqual(restored.hparams.loss_weight, 0.3)
+            self.assertFalse(restored.use_uncertainty_weighting)
+
+
+if __name__ == "__main__":
+    unittest.main()

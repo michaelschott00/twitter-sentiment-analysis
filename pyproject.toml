@@ -88,4 +88,3 @@ testpaths = ["twitter/tests"]
 python_files = ["*.py"]
 python_classes = ["*Tests", "Test*", "*Test"]
 python_functions = ["test_*"]
-addopts = "--ignore=twitter/tests/modules.py"

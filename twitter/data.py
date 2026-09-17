@@ -14,6 +14,30 @@ from twitter.augmentation import EDA
 from twitter.labels import INVERSE_LABEL_CODING, LABEL_CODING
 from twitter.util import TweetNormalizer, WordsToSentence
 
+
+def _resolve_pin_memory(requested: bool) -> bool:
+    """Only use pinned memory when an accelerator is available.
+
+    ``pin_memory=True`` on a CPU-only machine triggers a UserWarning from the
+    DataLoader ("no accelerator is found") without any benefit, while on GPU
+    machines it speeds up host-to-device transfers. Gating on accelerator
+    availability supports both setups with a single code path.
+    """
+    if not requested:
+        return False
+    try:
+        if torch.accelerator.is_available():
+            return True
+    except Exception:
+        pass
+    try:
+        if torch.cuda.is_available():
+            return True
+    except Exception:
+        pass
+    return False
+
+
 ################################
 #                              #
 #           Constants          #
@@ -421,7 +445,10 @@ class TwitterDataModule(pl.LightningDataModule):
             elif self.hparams.labels == "both":
                 samples_weight = torch.from_numpy(
                     np.array(
-                        [self.hparams.class_sample_weights[int(t[1])] for t in labels]
+                        [
+                            self.hparams.class_sample_weights[int(t["sentiment"])]
+                            for t in labels
+                        ]
                     )
                 )
             else:
@@ -448,7 +475,7 @@ class TwitterDataModule(pl.LightningDataModule):
             sampler=sampler,
             collate_fn=collate_fn,
             num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
+            pin_memory=_resolve_pin_memory(self.hparams.pin_memory),
             persistent_workers=self.hparams.num_workers > 0,
         )
 
@@ -459,7 +486,7 @@ class TwitterDataModule(pl.LightningDataModule):
             shuffle=False,
             collate_fn=self.collate_fn_map[self.twitter_dev.__class__],
             num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
+            pin_memory=_resolve_pin_memory(self.hparams.pin_memory),
             persistent_workers=self.hparams.num_workers > 0,
         )
 
@@ -470,7 +497,7 @@ class TwitterDataModule(pl.LightningDataModule):
             shuffle=False,
             collate_fn=self.collate_fn_map[self.twitter_test_1.__class__],
             num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
+            pin_memory=_resolve_pin_memory(self.hparams.pin_memory),
             persistent_workers=self.hparams.num_workers > 0,
         )
         dataloader_2 = DataLoader(
@@ -479,7 +506,7 @@ class TwitterDataModule(pl.LightningDataModule):
             shuffle=False,
             collate_fn=self.collate_fn_map[self.twitter_test_2.__class__],
             num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
+            pin_memory=_resolve_pin_memory(self.hparams.pin_memory),
             persistent_workers=self.hparams.num_workers > 0,
         )
         return [dataloader_1, dataloader_2]
