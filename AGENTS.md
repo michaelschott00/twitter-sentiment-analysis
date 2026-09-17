@@ -8,4 +8,3 @@
 - A push to the `dev` branch triggers:
   - a build and push to docker hub of the runpod docker image if it or any of its dependencies have changed.
   - terraform hcp to create a plan, which then has to be approved and applied by a human. It may take a while until a human is available to do this.
-- Use username "agent" and mail address "<agent@example.com>" to identify yourself in git commits.
