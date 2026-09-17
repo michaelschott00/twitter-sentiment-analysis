@@ -7,6 +7,7 @@ usage() {
   echo "  dev      - run dev container"
   echo "  gateway  - run gateway container"
   echo "  down     - docker compose down"
+  echo "  restart  - docker compose down and up"
   echo "  rebuild  - docker compose down && docker compose build"
 }
 
@@ -25,6 +26,9 @@ case "$1" in
     ;;
   down)
     docker compose down
+    ;;
+  restart)
+    docker compose down && docker compose up -d
     ;;
   rebuild)
     docker compose down && docker compose build

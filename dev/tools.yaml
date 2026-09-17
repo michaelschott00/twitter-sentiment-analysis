@@ -97,6 +97,11 @@ tools:
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, template, delete]
 
+  - name: runpodctl_gpu_list
+    description: List available gpu types and their availability on RunPod.
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, gpu, list]
+
   - name: runpodctl_template_list
     description: List RunPod templates (official, community, user).
     creds: [RUNPOD_API_KEY]
