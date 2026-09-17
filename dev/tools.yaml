@@ -9,6 +9,7 @@
 #   name, description, creds, needs_az_login, base_argv (enforced prefix),
 #   help_argv ([--help]), argv_allow_regex (catch-all over trailing args),
 #   params: [{name|--names (flag tokens), allow_regex (on the value),
+#             docker_image|url|ports (value is not a path: skip confinement),
 #             default/default_from (appended when flag absent), default_flag}].
 # Unlisted flags and positionals are allowed (globals only).
 defaults:
@@ -72,6 +73,11 @@ tools:
     description: Create a RunPod pod with passthrough options.
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, pod, create]
+    params:
+      - names: [--image]
+        docker_image: true
+      - names: [--ports]
+        ports: true
 
   - name: runpodctl_template_create
     description: -<
@@ -80,3 +86,21 @@ tools:
       Secrets stored on runopd can be injected as environment variables prefixed with RUNPOD_SECRET_ (e.g. `API_KEY={{ RUNPOD_SECRET_openai_key }}`).
     creds: [RUNPOD_API_KEY, RUNPOD_REGISTRY_AUTH_ID]
     base_argv: [runpodctl, template, create]
+    params:
+      - names: [--image]
+        docker_image: true
+      - names: [--ports]
+        ports: true
+
+  - name: runpodctl_template_delete
+    description: Delete a RunPod template by id.
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, template, delete]
+
+  - name: runpodctl_template_list
+    description: List RunPod templates (official, community, user).
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, template, list]
+    params:
+      - names: [--type]
+        allow_regex: "^(official|community|user|all)$"

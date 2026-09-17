@@ -28,6 +28,9 @@ tools.yaml schema per tool:
   params:
     - name: --flag (or names: [--flag, -f] for aliases)
       allow_regex: str (optional, each occurrence's value must match)
+      docker_image: bool (optional, value is an image name: skip confinement)
+      url: bool (optional, value is a URL: skip confinement)
+      ports: bool (optional, value is a port list: skip confinement)
       default: scalar (optional literal appended when flag absent)
       default_from: str (optional key into top-level `defaults:`)
       default_flag: str (spelling used when auto-appending; default: first name)
@@ -63,6 +66,16 @@ MAX_OUTPUT = int(os.environ.get("TOOL_MAX_OUTPUT", "262144"))
 
 SHELL_META = re.compile("[;|&$`!\n\r]")
 AZ_LOGIN_TIMEOUT_S = int(os.environ.get("AZ_LOGIN_TIMEOUT_S", "30"))
+
+# Format check for params marked `docker_image: true` in tools.yaml.
+# Permissive on purpose (single-component names like "nginx" are valid);
+# RunPod/the registry is the final judge.
+DOCKER_IMAGE_RE = re.compile(
+    r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*"
+    r"(?::[A-Za-z0-9._-]+)?(?:@[A-Za-z0-9:._-]+)?$"
+)
+# RunPod-style port lists, e.g. "22/tcp" or "22/tcp,8888/http".
+PORT_LIST_RE = re.compile(r"^\d+/(tcp|udp|http|https)(,\d+/(tcp|udp|http|https))*$")
 
 broker = Broker()
 server = MCPServer("tool-gateway")
@@ -273,6 +286,16 @@ def _maybe_confine(value: str) -> str:
     """
     if not isinstance(value, str) or not value:
         return value
+    stripped = value.strip()
+    if (
+        # "://" never occurs in a workspace path; positional args (e.g. azcopy
+        # source/dest URLs) cannot be marked via per-flag params, so URLs pass
+        # through globally.
+        "://" in value
+        # A JSON object is never a path (e.g. runpodctl --env '{"K":"V"}').
+        or (stripped.startswith("{") and stripped.endswith("}"))
+    ):
+        return value
     root = REPO_ROOT.resolve()
     p = Path(value)
     if p.is_absolute():
@@ -335,6 +358,28 @@ def _parse_flags(trailing: list[str]) -> list[tuple[str | None, str | None]]:
     return pairs
 
 
+def _check_value(spec: dict | None, value: str) -> str:
+    """Check a flag value: shell-meta always; path confinement by default.
+
+    Values of flags marked `docker_image: true`, `url: true`, or `ports: true`
+    in tools.yaml are not paths, so confinement is skipped (after a fail-fast
+    format check). Everything else goes through _maybe_confine.
+    """
+    if SHELL_META.search(value):
+        raise ValueError(f"rejected shell metacharacters in: {value!r}")
+    if spec is not None and (
+        spec.get("docker_image") or spec.get("url") or spec.get("ports")
+    ):
+        if spec.get("docker_image") and not DOCKER_IMAGE_RE.match(value):
+            raise ValueError(f"not a docker image name[:tag][@digest]: {value!r}")
+        if spec.get("url") and "://" not in value:
+            raise ValueError(f"not a URL: {value!r}")
+        if spec.get("ports") and not PORT_LIST_RE.match(value):
+            raise ValueError(f"not a port list (e.g. '22/tcp,8888/http'): {value!r}")
+        return value
+    return _maybe_confine(value)
+
+
 def _validate_argv(cfg: dict, defaults: dict, argv: list[str]) -> list[str]:
     """Validate full argv: prefix, globals, flag rules, catch-all, defaults."""
     if not isinstance(argv, list) or not argv:
@@ -383,10 +428,33 @@ def _validate_argv(cfg: dict, defaults: dict, argv: list[str]) -> list[str]:
 
     full = [str(x) for x in argv] + extra
     checked = full[: len(base_argv)]
-    for tok in full[len(base_argv) :]:
+    # Walk raw tokens (preserving `--flag=value` shape) so each value is
+    # checked with its flag's context (docker_image/url skips confinement).
+    toks = full[len(base_argv) :]
+    for tok in toks:
         if catch_rx and not catch_rx.search(tok):
             raise ValueError(f"argument not allowed: {tok!r}")
-        checked.append(_check_global(tok))
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        if tok.startswith("-") and len(tok) > 1 and "=" in tok:
+            flag, _, val = tok.partition("=")
+            checked.append(
+                _check_global(flag) + "=" + _check_value(rules.get(flag), val)
+            )
+            i += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            checked.append(_check_global(tok))
+            if i + 1 < len(toks) and not (
+                toks[i + 1].startswith("-") and len(toks[i + 1]) > 1
+            ):
+                checked.append(_check_value(rules.get(tok), toks[i + 1]))
+                i += 2
+            else:
+                i += 1
+        else:
+            checked.append(_check_global(tok))
+            i += 1
     return checked
 
 
@@ -402,6 +470,12 @@ def _appendix(cfg: dict) -> str:
         bits = [label]
         if spec.get("allow_regex"):
             bits.append(f"value must match {spec['allow_regex']}")
+        if spec.get("docker_image"):
+            bits.append("value is a docker image name (not a path; no confinement)")
+        if spec.get("url"):
+            bits.append("value is a URL (not a path; no confinement)")
+        if spec.get("ports"):
+            bits.append("value is a port list (not a path; no confinement)")
         if spec.get("default_from") is not None:
             bits.append(
                 f"default from defaults.{spec['default_from']} appended as {spec.get('default_flag') or names[0]} when absent"
@@ -481,6 +555,9 @@ def _register_all(manifest: dict | None = None) -> None:
                 )
             if spec.get("allow_regex"):
                 re.compile(spec["allow_regex"])  # raise early on bad regex
+            for key in ("docker_image", "url", "ports"):
+                if key in spec and not isinstance(spec[key], bool):
+                    raise ValueError(f"param {key!r} must be true/false: {spec!r}")
         fn = _make_fn(cfg, defaults)
         server.add_tool(
             fn,

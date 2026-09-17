@@ -296,6 +296,112 @@ def test_runpodctl_forwards_valid_options():
     assert m.call_args[0][0][:3] == ["runpodctl", "pod", "create"]
 
 
+def test_template_image_skips_confinement():
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        out = server_mod.call_tool(
+            "runpodctl_template_create",
+            argv=[
+                "runpodctl",
+                "template",
+                "create",
+                "--name",
+                "t",
+                "--image",
+                "michaelschott00/twitter-sentiment:dev",
+            ],
+        )
+    assert "returncode: 0" in out
+    assert "michaelschott00/twitter-sentiment:dev" in m.call_args[0][0]
+
+
+def test_template_image_eq_form_preserved():
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        server_mod.call_tool(
+            "runpodctl_template_create",
+            argv=[
+                "runpodctl",
+                "template",
+                "create",
+                "--image=runpod/pytorch:2.1.0",
+            ],
+        )
+    assert "--image=runpod/pytorch:2.1.0" in m.call_args[0][0]
+
+
+def test_template_image_rejects_path():
+    out = server_mod.call_tool(
+        "runpodctl_template_create",
+        argv=[
+            "runpodctl",
+            "template",
+            "create",
+            "--name",
+            "t",
+            "--image",
+            "/etc/passwd",
+        ],
+    )
+    assert "returncode: 1" in out and "docker image" in out
+
+
+def test_unmarked_slash_value_still_confined(tmp_ws):
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        server_mod.call_tool(
+            "gh_pr", argv=["gh", "pr", "list", "--repo", "o/r", "--limit", "5"]
+        )
+    assert str(tmp_ws / "o" / "r") in m.call_args[0][0]
+
+
+def test_url_param_skips_confinement():
+    cfg = {"base_argv": ["foo"], "params": [{"names": ["--u"], "url": True}]}
+    out = server_mod._validate_argv(cfg, {}, ["foo", "--u", "https://x.example/a/b"])
+    assert out == ["foo", "--u", "https://x.example/a/b"]
+    with pytest.raises(ValueError, match="not a URL"):
+        server_mod._validate_argv(cfg, {}, ["foo", "--u", "not-a-url"])
+
+
+def test_template_ports_skips_confinement():
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        out = server_mod.call_tool(
+            "runpodctl_template_create",
+            argv=[
+                "runpodctl",
+                "template",
+                "create",
+                "--name",
+                "t",
+                "--image",
+                "nginx",
+                "--ports",
+                "22/tcp,8888/http",
+            ],
+        )
+    assert "returncode: 0" in out
+    assert "22/tcp,8888/http" in m.call_args[0][0]
+
+
+def test_template_ports_rejects_path():
+    out = server_mod.call_tool(
+        "runpodctl_template_create",
+        argv=[
+            "runpodctl",
+            "template",
+            "create",
+            "--name",
+            "t",
+            "--image",
+            "nginx",
+            "--ports",
+            "configs/x.yaml",
+        ],
+    )
+    assert "returncode: 1" in out and "port list" in out
+
+
 def test_azcopy_rejects_non_blob_url():
     out = server_mod.call_tool(
         "azcopy",

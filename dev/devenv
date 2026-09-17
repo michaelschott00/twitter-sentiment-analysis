@@ -5,6 +5,7 @@ usage() {
   echo "  up       - docker compose up -d"
   echo "  agent    - run dev container and start agent"
   echo "  dev      - run dev container"
+  echo "  gateway  - run gateway container"
   echo "  down     - docker compose down"
   echo "  rebuild  - docker compose down && docker compose build"
 }
@@ -18,6 +19,9 @@ case "$1" in
     ;;
   dev)
     HERDR_AGENT=opencode docker compose run --rm --remove-orphans dev
+    ;;
+  gateway)
+    docker compose exec -it tool-gateway /bin/bash
     ;;
   down)
     docker compose down
