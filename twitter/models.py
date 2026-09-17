@@ -50,7 +50,7 @@ class TransformerEncoder(nn.Module):
         self.config = AutoConfig.from_pretrained(name)
         self.encoder = AutoModel.from_pretrained(name, config=self.config)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(name, model_max_length=512)
+        self.tokenizer = AutoTokenizer.from_pretrained(name, model_max_length=128)
 
         if gradient_checkpointing and hasattr(
             self.encoder, "gradient_checkpointing_enable"
@@ -135,6 +135,8 @@ class TransformerRegressor(nn.Module):
 
         self.head = nn.Sequential(
             nn.Linear(self.encoder.config.hidden_size, 1),
+            # VADER compound targets live in [-1, 1]; keep predictions in range
+            nn.Tanh(),
         )
 
         # store the loss function here to allow a unified training loop
@@ -174,9 +176,10 @@ class TransformerClassifier(nn.Module):
         self.metrics = MetricCollection(
             [
                 MulticlassAccuracy(num_classes=self.num_classes, average="micro"),
+                # class imbalance -> macro averaging so minority classes count
                 MulticlassF1Score(
                     num_classes=self.num_classes,
-                    average="macro",  # we have a class imbalance, so we use micro averaging
+                    average="macro",
                 ),
                 MulticlassPrecision(num_classes=self.num_classes, average="macro"),
                 MulticlassRecall(num_classes=self.num_classes, average="macro"),
@@ -245,13 +248,13 @@ class SupervisedContrastiveClassifier(nn.Module):
             class_weights = torch.tensor(class_weights)
         self.loss_ce = nn.CrossEntropyLoss(weight=class_weights)
 
-        # we have a class imbalance, so we use micro averaging
+        # class imbalance -> macro averaging so minority classes count
         self.metrics = MetricCollection(
             [
                 MulticlassAccuracy(num_classes=self.num_classes, average="micro"),
-                MulticlassF1Score(num_classes=self.num_classes, average="micro"),
-                MulticlassPrecision(num_classes=self.num_classes, average="micro"),
-                MulticlassRecall(num_classes=self.num_classes, average="micro"),
+                MulticlassF1Score(num_classes=self.num_classes, average="macro"),
+                MulticlassPrecision(num_classes=self.num_classes, average="macro"),
+                MulticlassRecall(num_classes=self.num_classes, average="macro"),
             ]
         )
         self.val_confmat = MulticlassConfusionMatrix(num_classes=self.num_classes)

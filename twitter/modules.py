@@ -1,3 +1,4 @@
+import math
 from typing import Literal
 
 import lightning.pytorch as pl
@@ -17,6 +18,50 @@ from twitter.models import (
 )
 
 
+# Fail-safe default: low LR for the pretrained encoder, higher LR for the
+# randomly initialized head. A single high LR over the whole model would
+# destroy pretrained weights, so there is intentionally no scalar default.
+DEFAULT_LR = {"encoder": 1e-5, "head": 3e-4}
+
+
+def _build_lr_scheduler(optimizer, total_steps, warmup_pct=0.06, kind="linear"):
+    """Linear warmup + linear/cosine decay (standard transformer fine-tuning)."""
+    warmup_steps = max(1, int(total_steps * warmup_pct))
+
+    def _lr_factor(step):
+        if step < warmup_steps:
+            return (step + 1) / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        progress = min(max(progress, 0.0), 1.0)
+        if kind == "cosine":
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        return 1.0 - progress
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_factor)
+
+
+def _with_lr_scheduler(pl_module, optimizer):
+    """Attach the warmup+decay scheduler; fall back to plain optimizer if
+    the schedule can't be determined (e.g. scheduler disabled or no trainer)."""
+    kind = getattr(pl_module.hparams, "scheduler", "linear")
+    if kind is None:
+        return optimizer
+    try:
+        total_steps = pl_module.trainer.estimated_stepping_batches
+    except Exception:
+        return optimizer
+    scheduler = _build_lr_scheduler(
+        optimizer,
+        total_steps,
+        warmup_pct=getattr(pl_module.hparams, "warmup_pct", 0.06),
+        kind=kind,
+    )
+    return {
+        "optimizer": optimizer,
+        "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+    }
+
+
 class _BaseModule(pl.LightningModule):
     """Base module implementing common functionality for all models in this project.
 
@@ -32,11 +77,16 @@ class _BaseModule(pl.LightningModule):
         encoder: TransformerEncoder,
         task: Literal["reg", "clf"],
         checkpoint: str = None,
-        lr: float | dict[str, float] = 3e-4,
+        lr: float | dict[str, float] = None,
         weight_decay: float = 0.01,
         freeze_cfg: dict[str, list[int]] = None,
         unfreeze_cfg: dict[str, list[int]] = None,
+        warmup_pct: float = 0.06,
+        scheduler: Literal["linear", "cosine"] | None = "linear",
     ):
+        # Note: hparams are saved by the subclass (save_hyperparameters
+        # inspects the calling frame), so subclass __init__s must declare
+        # lr/warmup_pct/scheduler explicitly and resolve defaults there.
         super().__init__()
 
         if checkpoint:
@@ -159,6 +209,7 @@ class _BaseModule(pl.LightningModule):
         disp = ConfusionMatrixDisplay(confmat.compute().cpu().numpy())
         disp.plot(ax=fig.gca())
         self._log_figure("Confusion Matrix/validation", fig)
+        plt.close(fig)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=None):
         pred = self.forward(batch)
@@ -175,12 +226,16 @@ class SingleTaskModule(_BaseModule):
         encoder: TransformerEncoder,
         task: Literal["reg", "clf"],
         checkpoint: str = None,
-        lr: float | dict[str, float] = 3e-4,
+        lr: float | dict[str, float] = None,
         weight_decay: float = 0.01,
         freeze_cfg: dict[str, list[int]] = None,
         unfreeze_cfg: dict[str, list[int]] = None,
         class_weights: list[float] = None,
+        warmup_pct: float = 0.06,
+        scheduler: Literal["linear", "cosine"] | None = "linear",
     ):
+        if lr is None:
+            lr = dict(DEFAULT_LR)
         super().__init__(
             encoder=encoder,
             checkpoint=checkpoint,
@@ -189,6 +244,8 @@ class SingleTaskModule(_BaseModule):
             weight_decay=weight_decay,
             unfreeze_cfg=unfreeze_cfg,
             freeze_cfg=freeze_cfg,
+            warmup_pct=warmup_pct,
+            scheduler=scheduler,
         )
 
         self.save_hyperparameters(ignore="encoder")
@@ -242,7 +299,10 @@ class SingleTaskModule(_BaseModule):
             ]
         else:
             parameters = [{"params": self.parameters(), "lr": self.hparams.lr}]
-        return torch.optim.AdamW(parameters, weight_decay=self.hparams.weight_decay)
+        optimizer = torch.optim.AdamW(
+            parameters, weight_decay=self.hparams.weight_decay
+        )
+        return _with_lr_scheduler(self, optimizer)
 
 
 class MultiTaskModule(_BaseModule):
@@ -253,14 +313,18 @@ class MultiTaskModule(_BaseModule):
         encoder: TransformerEncoder,
         task: Literal["reg", "clf"],
         checkpoint: str = None,
-        lr: float | dict[str, float] = 3e-4,
+        lr: float | dict[str, float] = None,
         weight_decay: float = 0.01,
         freeze_cfg: dict[str, list[int]] = None,
         unfreeze_cfg: dict[str, list[int]] = None,
         freeze: bool = False,
-        loss_weight: float = 1.0,
+        loss_weight: float = None,
         class_weights: list[float] = None,
+        warmup_pct: float = 0.06,
+        scheduler: Literal["linear", "cosine"] | None = "linear",
     ):
+        if lr is None:
+            lr = dict(DEFAULT_LR)
         super().__init__(
             encoder=encoder,
             checkpoint=checkpoint,
@@ -269,9 +333,18 @@ class MultiTaskModule(_BaseModule):
             weight_decay=weight_decay,
             freeze_cfg=freeze_cfg,
             unfreeze_cfg=unfreeze_cfg,
+            warmup_pct=warmup_pct,
+            scheduler=scheduler,
         )
 
         self.save_hyperparameters(ignore="encoder")
+        # Homoscedastic uncertainty weighting (Kendall et al. 2018): when no
+        # explicit loss_weight is given, the task balance is learned instead
+        # of mixing raw MSE and CE, which live on different scales.
+        self.use_uncertainty_weighting = loss_weight is None
+        if self.use_uncertainty_weighting:
+            self.log_sigma_reg = nn.Parameter(torch.zeros(()))
+            self.log_sigma_clf = nn.Parameter(torch.zeros(()))
         self.reg = TransformerRegressor(encoder)
         self.clf = TransformerClassifier(encoder, class_weights=class_weights)
 
@@ -284,13 +357,29 @@ class MultiTaskModule(_BaseModule):
     def forward(self, batch):
         return self.model(batch["input_ids"], batch["attention_mask"])
 
+    def forward_both(self, batch):
+        """Single shared encoder pass feeding both heads (one forward instead
+        of two, with consistent embeddings across heads)."""
+        embeddings = self.encoder(batch["input_ids"], batch["attention_mask"])
+        reg_logits = self.reg.head(embeddings).squeeze(1)
+        clf_logits = self.clf.head(embeddings)
+        return reg_logits, clf_logits
+
     def loss_func(self, reg_logits, clf_logits, reg_labels, clf_labels):
         reg_loss = self.reg.loss_func(reg_logits, reg_labels)
         clf_loss = self.clf.loss_func(clf_logits, clf_labels)
-        loss = (
-            self.hparams.loss_weight * reg_loss
-            + (1 - self.hparams.loss_weight) * clf_loss
-        )
+        if self.use_uncertainty_weighting:
+            loss = (
+                torch.exp(-self.log_sigma_reg) * reg_loss
+                + self.log_sigma_reg
+                + torch.exp(-self.log_sigma_clf) * clf_loss
+                + self.log_sigma_clf
+            )
+        else:
+            loss = (
+                self.hparams.loss_weight * reg_loss
+                + (1 - self.hparams.loss_weight) * clf_loss
+            )
         return reg_loss, clf_loss, loss
 
     def training_step(self, batch, batch_idx):
@@ -301,8 +390,7 @@ class MultiTaskModule(_BaseModule):
         ).long()  # CrossEntropyLoss expects long labels but combining the labels into one tensor converts both to float
         reg_labels = reg_labels.squeeze(1)
 
-        reg_logits = self.reg(batch["input_ids"], batch["attention_mask"])
-        clf_logits = self.clf(batch["input_ids"], batch["attention_mask"])
+        reg_logits, clf_logits = self.forward_both(batch)
 
         reg_loss, clf_loss, loss = self.loss_func(
             reg_logits, clf_logits, reg_labels, clf_labels
@@ -320,8 +408,7 @@ class MultiTaskModule(_BaseModule):
         clf_labels = clf_labels.squeeze(1).long()
         reg_labels = reg_labels.squeeze(1)
 
-        reg_logits = self.reg(batch["input_ids"], batch["attention_mask"])
-        clf_logits = self.clf(batch["input_ids"], batch["attention_mask"])
+        reg_logits, clf_logits = self.forward_both(batch)
 
         reg_loss, clf_loss, loss = self.loss_func(
             reg_logits, clf_logits, reg_labels, clf_labels
@@ -349,9 +436,8 @@ class MultiTaskModule(_BaseModule):
         self.log_dict(self.clf.metrics.compute())
         self.reg.metrics.reset()
         self.clf.metrics.reset()
-        if self.hparams.task == "clf":
-            self.log_confusion_matrix(self.clf.val_confmat)
-            self.clf.val_confmat.reset()
+        self.log_confusion_matrix(self.clf.val_confmat)
+        self.clf.val_confmat.reset()
 
     def configure_optimizers(self):
         if isinstance(self.hparams.lr, dict):
@@ -362,14 +448,22 @@ class MultiTaskModule(_BaseModule):
             ]
         else:
             parameters = [{"params": self.parameters(), "lr": self.hparams.lr}]
-        return torch.optim.AdamW(parameters, weight_decay=self.hparams.weight_decay)
+        optimizer = torch.optim.AdamW(
+            parameters, weight_decay=self.hparams.weight_decay
+        )
+        return _with_lr_scheduler(self, optimizer)
 
 
 class SimCSEModule(pl.LightningModule):
     """This module implements the unsupervised contrastive learning method SimCSE (https://arxiv.org/pdf/2104.08821.pdf)."""
 
     def __init__(
-        self, encoder: TransformerEncoder, lr: float = 3e-5, weight_decay: float = 0.01
+        self,
+        encoder: TransformerEncoder,
+        lr: float = 3e-5,
+        weight_decay: float = 0.01,
+        warmup_pct: float = 0.06,
+        scheduler: Literal["linear", "cosine"] | None = "linear",
     ):
         super().__init__()
 
@@ -402,11 +496,12 @@ class SimCSEModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(
+        optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )
+        return _with_lr_scheduler(self, optimizer)
 
 
 class SupervisedConstrastivePretrainingModule(pl.LightningModule):
@@ -418,6 +513,8 @@ class SupervisedConstrastivePretrainingModule(pl.LightningModule):
         projector: Projector,
         lr: float = 3e-5,
         weight_decay: float = 0.01,
+        warmup_pct: float = 0.06,
+        scheduler: Literal["linear", "cosine"] | None = "linear",
     ):
         super().__init__()
 
@@ -439,11 +536,12 @@ class SupervisedConstrastivePretrainingModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(
+        optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )
+        return _with_lr_scheduler(self, optimizer)
 
 
 class SupervisedConstrastiveLearningModule(_BaseModule):
@@ -452,14 +550,18 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
     def __init__(
         self,
         encoder: TransformerEncoder,
-        lr: float | dict[str, float] = 3e-4,
+        lr: float | dict[str, float] = None,
         weight_decay: float = 0.01,
         loss_weight: float = 0.9,
         temperature: float = 0.3,
         freeze_cfg: dict[str, list[int]] = None,
         unfreeze_cfg: dict[str, list[int]] = None,
         class_weights: list[float] = None,
+        warmup_pct: float = 0.06,
+        scheduler: Literal["linear", "cosine"] | None = "linear",
     ):
+        if lr is None:
+            lr = dict(DEFAULT_LR)
         super().__init__(
             encoder=encoder,
             freeze_cfg=freeze_cfg,
@@ -467,6 +569,8 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
             task="clf",
             lr=lr,
             weight_decay=weight_decay,
+            warmup_pct=warmup_pct,
+            scheduler=scheduler,
         )
 
         self.save_hyperparameters(ignore="encoder")
@@ -518,4 +622,7 @@ class SupervisedConstrastiveLearningModule(_BaseModule):
             ]
         else:
             parameters = [{"params": self.parameters(), "lr": self.hparams.lr}]
-        return torch.optim.AdamW(parameters, weight_decay=self.hparams.weight_decay)
+        optimizer = torch.optim.AdamW(
+            parameters, weight_decay=self.hparams.weight_decay
+        )
+        return _with_lr_scheduler(self, optimizer)

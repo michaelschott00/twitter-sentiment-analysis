@@ -1,7 +1,9 @@
 model:
   class_path: twitter.modules.MultiTaskModule
   init_args:
-    loss_weight: 0.8
+    # null -> homoscedastic uncertainty weighting (learned task balance);
+    # set a float for the legacy fixed blend: loss_weight * reg + (1 - loss_weight) * clf
+    loss_weight: null
 data:
   init_args:
     labels: "both"

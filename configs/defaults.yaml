@@ -1,11 +1,11 @@
 # lightning.pytorch==2.0.1.post0
-seed_everything: true
+seed_everything: 42
 trainer:
   accelerator: auto
   strategy: auto
   devices: auto
   num_nodes: 1
-  precision: 32-true
+  precision: bf16-mixed
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
@@ -36,8 +36,8 @@ trainer:
   enable_checkpointing: true
   enable_progress_bar: true
   enable_model_summary: null
-  accumulate_grad_batches: 1
-  gradient_clip_val: null
+  accumulate_grad_batches: 4
+  gradient_clip_val: 1.0
   gradient_clip_algorithm: null
   deterministic: null
   benchmark: null

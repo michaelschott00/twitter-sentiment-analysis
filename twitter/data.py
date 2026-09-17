@@ -247,6 +247,8 @@ class TwitterDataModule(pl.LightningDataModule):
         encoder_name: str,
         # hparams
         batch_size: int = 32,
+        num_workers: int = 0,
+        pin_memory: bool = True,
         class_sample_weights: tuple[
             float, float, float
         ] = None,  # negative, neutral, positive
@@ -269,7 +271,7 @@ class TwitterDataModule(pl.LightningDataModule):
         ), "contrastive learning only implemented for clf labels"
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            encoder_name, model_max_length=512
+            encoder_name, model_max_length=128
         )
 
         preprocessing = []
@@ -445,6 +447,9 @@ class TwitterDataModule(pl.LightningDataModule):
             shuffle=sampler is None,
             sampler=sampler,
             collate_fn=collate_fn,
+            num_workers=self.hparams.num_workers,
+            pin_memory=self.hparams.pin_memory,
+            persistent_workers=self.hparams.num_workers > 0,
         )
 
     def val_dataloader(self):
@@ -453,6 +458,9 @@ class TwitterDataModule(pl.LightningDataModule):
             batch_size=self.hparams.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn_map[self.twitter_dev.__class__],
+            num_workers=self.hparams.num_workers,
+            pin_memory=self.hparams.pin_memory,
+            persistent_workers=self.hparams.num_workers > 0,
         )
 
     def predict_dataloader(self):
@@ -461,12 +469,18 @@ class TwitterDataModule(pl.LightningDataModule):
             batch_size=self.hparams.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn_map[self.twitter_test_1.__class__],
+            num_workers=self.hparams.num_workers,
+            pin_memory=self.hparams.pin_memory,
+            persistent_workers=self.hparams.num_workers > 0,
         )
         dataloader_2 = DataLoader(
             self.twitter_test_2,
             batch_size=self.hparams.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn_map[self.twitter_test_2.__class__],
+            num_workers=self.hparams.num_workers,
+            pin_memory=self.hparams.pin_memory,
+            persistent_workers=self.hparams.num_workers > 0,
         )
         return [dataloader_1, dataloader_2]
         # return [dataloader_2]
