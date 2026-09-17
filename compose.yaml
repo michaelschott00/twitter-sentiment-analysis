@@ -10,8 +10,10 @@ services:
       - ~/.local/share/opencode:/home/agent/.local/share/opencode
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
     environment:
+      - GIT_AUTHOR_NAME=agent
+      - GIT_AUTHOR_EMAIL=agent@example.com
       - GIT_COMMITTER_NAME=agent
-      - GIT_COMMITTER_EMAIL="agent@example.com"
+      - GIT_COMMITTER_EMAIL=agent@example.com
 
   # Single authenticated exec gateway. Secrets enter ONLY here via env_file;
   # the agent (dev) container holds none. Add new creds by adding an env_file
