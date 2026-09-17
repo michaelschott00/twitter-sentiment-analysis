@@ -31,6 +31,11 @@ torch = [
     "torchmetrics==1.9.0",
     "jsonargparse[signatures]==4.52.0",
     "omegaconf==2.3.1",
+    # omegaconf 2.3.x vendors ANTLR-generated parsers requiring runtime 4.9;
+    # newer runtimes (e.g. 4.13 from base images) break `import omegaconf`
+    # with "Could not deserialize ATN", which surfaces in the CLI as the
+    # cryptic error: 'omegaconf'.
+    "antlr4-python3-runtime==4.9.3",
     "sacremoses==0.2.0",
     "emoji==2.15.0",
     "nltk==3.10.3",
