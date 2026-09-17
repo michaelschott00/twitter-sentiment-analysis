@@ -5,6 +5,10 @@ trainer:
   strategy: auto
   devices: auto
   num_nodes: 1
+  # bf16 needs Ampere+ GPUs (DeBERTa-v3/ModernBERT also train best on it).
+  # For older GPUs override on the CLI, e.g.:
+  #   trainer.precision=16-mixed   # pre-Ampere with Tensor Cores (e.g. V100/T4)
+  #   trainer.precision=32-true    # fallback when mixed precision is unstable
   precision: bf16-mixed
   logger:
     class_path: lightning.pytorch.loggers.MLFlowLogger
