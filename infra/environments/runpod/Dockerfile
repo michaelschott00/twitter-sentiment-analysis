@@ -80,16 +80,42 @@ if [ "$AUTO_STOP" -eq 1 ]; then
           az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null
         fi
         mkdir -p "$DEST"
-        TMP_DL="$(mktemp -d)"
-        az ml data download --name "$DATA_NAME" --version "$DATA_VERSION" \
-          --download-path "$TMP_DL" \
+        # NOTE: `az ml data download` was removed from the Azure CLI ml
+        # extension, so resolve the datastore-backed asset with
+        # `az ml data show` (GA) and pull the blobs with `az storage`
+        # (CLI core, works with the service-principal login above).
+        # The twitter-splits asset is a uri_folder like
+        # azureml://datastores/<datastore>/paths/<prefix>/.
+        ASSET_PATH="$(az ml data show --name "$DATA_NAME" --version "$DATA_VERSION" \
           --subscription "$AZURE_SUBSCRIPTION_ID" \
           --resource-group "$AZURE_RESOURCE_GROUP" \
-          --workspace-name "$AZUREML_WORKSPACE"
-        # `az ml data download` nests files one level deep (<tmp>/<name>/*.csv);
-        # flatten them into $DEST.
-        find "$TMP_DL" -maxdepth 2 -name 'tweets_*.csv' -exec cp -t "$DEST" {} +
-        rm -rf "$TMP_DL"
+          --workspace-name "$AZUREML_WORKSPACE" \
+          --query path -o tsv)"
+        DS_NAME="$(printf '%s' "$ASSET_PATH" | sed -e 's#^azureml://datastores/##' -e 's#/.*$##')"
+        DS_PREFIX="$(printf '%s' "$ASSET_PATH" | sed -e 's#^azureml://datastores/[^/]*/paths/##' -e 's#^/##' -e 's#/$##')"
+        ACCT_NAME="$(az ml datastore show --name "$DS_NAME" \
+          --subscription "$AZURE_SUBSCRIPTION_ID" \
+          --resource-group "$AZURE_RESOURCE_GROUP" \
+          --workspace-name "$AZUREML_WORKSPACE" \
+          --query account_name -o tsv)"
+        CONTAINER_NAME="$(az ml datastore show --name "$DS_NAME" \
+          --subscription "$AZURE_SUBSCRIPTION_ID" \
+          --resource-group "$AZURE_RESOURCE_GROUP" \
+          --workspace-name "$AZUREML_WORKSPACE" \
+          --query container_name -o tsv)"
+        if [ -n "$DS_PREFIX" ]; then LIST_PREFIX="$DS_PREFIX/"; else LIST_PREFIX=""; fi
+        BLOB_NAMES="$(az storage blob list --account-name "$ACCT_NAME" \
+          --container-name "$CONTAINER_NAME" --prefix "$LIST_PREFIX" \
+          --auth-mode login --query "[].name" -o tsv)"
+        for BLOB in $BLOB_NAMES; do
+          case "$BLOB" in
+            *.csv)
+              az storage blob download --account-name "$ACCT_NAME" \
+                --container-name "$CONTAINER_NAME" --auth-mode login \
+                --name "$BLOB" --file "$DEST/$(basename "$BLOB")" --no-progress
+              ;;
+          esac
+        done
         ls -lh "$DEST"
       fi
       ;;
