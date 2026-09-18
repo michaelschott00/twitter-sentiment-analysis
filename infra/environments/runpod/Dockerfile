@@ -28,17 +28,17 @@ RUN python -m venv /opt/azcli && \
     /opt/azcli/bin/pip install --no-cache-dir azure-cli && \
     ln -s /opt/azcli/bin/az /usr/local/bin/az && \
     az extension add --name ml --yes
-# Pin a coherent torch/torchvision pair (torch 2.9.0 <-> torchvision 0.24.0).
-# The base RC image can ship a torchvision whose compiled ops don't match its
-# torch, which surfaces as
-# `AttributeError: partially initialized module 'torchvision' ...` on
-# `import torchvision` (pulled in via lightning -> torchmetrics), before any
-# training code runs.
-RUN pip install --no-cache-dir "torch==2.9.0" "torchvision==0.24.0"
+# Pin a coherent torch/torchvision/torchaudio trio (2.9.0/0.24.0/2.9.0).
+# The base RC image ships a cu129-built stack while PyPI defaults to cu128;
+# mixing them breaks compiled-op checks at import time (torchvision's
+# meta registrations, torchaudio's CUDA version check — the latter is hit
+# unconditionally via transformers.audio_utils and surfaces in the training
+# CLI as `error: ... Could not import module 'pipeline'`).
+RUN pip install --no-cache-dir "torch==2.9.0" "torchvision==0.24.0" "torchaudio==2.9.0"
 # Build-time gate: fail the image build (not a GPU pod at $0.50+/hr) if the
-# training CLI's import chain is broken. Covers torch/torchvision ABI drift
+# training code's import chain is broken. Covers torch CUDA-ABI drift
 # and the omegaconf/antlr4 version conflict.
-RUN python -c "import omegaconf, torchvision, torchmetrics, lightning; print('training imports ok')"
+RUN python -c "import twitter.data, twitter.models, twitter.modules; print('training imports ok')"
 
 COPY ./configs ./configs
 
