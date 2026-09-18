@@ -8,8 +8,7 @@ WORKDIR /workspace
 ENV HOME=/home/agent \
     PIP_CACHE_DIR=/home/agent/.cache/pip \
     PORT=8004 \
-    TOOLS_YAML=/workspace/dev/tools.yaml \
-    AZURE_EXTENSION_DIR=/home/agent/.azure/cliextensions
+    TOOLS_YAML=/workspace/dev/tools.yaml
 
 ARG AZURE_CLI_VERSION=2.90.0
 ARG ML_EXTENSION_VERSION=2.44.1
