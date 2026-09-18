@@ -13,9 +13,9 @@ Every tool has the same CLI-like surface:
 The agent passes the FULL argv including the executable, e.g.
   azml_job_submit(argv=["az", "ml", "job", "create", "--file", "job.yaml"])
 The server checks argv starts with the tool's base_argv, applies global
-checks (shell-meta rejection + workspace confinement) to every element,
-applies per-flag restrictions from tools.yaml, and appends configured
-defaults for missing flags.
+checks (shell-meta rejection) to every element, applies per-argument
+restrictions from tools.yaml, and appends configured defaults for missing
+flags. Path confinement is opt-in per argument via `path: true`.
 
 tools.yaml schema per tool:
   name: str (required)
@@ -25,14 +25,13 @@ tools.yaml schema per tool:
   base_argv: [exe, ...] (required; enforced as argv prefix)
   help_argv: [...] (default [--help])
   argv_allow_regex: str (optional catch-all every trailing element must match)
-  params:
-    - name: --flag (or names: [--flag, -f] for aliases)
+  params (each entry selects named flags OR positionals, not both):
+    - names: [--flag, -f]  (named arguments; aliases)
+      positional: 1 (or [1, 2]; 1-based index among non-flag tokens)
       allow_regex: str (optional, each occurrence's value must match)
-      docker_image: bool (optional, value is an image name: skip confinement)
-      url: bool (optional, value is a URL: skip confinement)
-      ports: bool (optional, value is a port list: skip confinement)
-      default: scalar (optional literal appended when flag absent)
-      default_from: str (optional key into top-level `defaults:`)
+      path: bool (optional; value is confined to the workspace)
+      default: scalar (optional literal appended when flag absent; named only)
+      default_from: str (optional key into top-level `defaults:`; named only)
       default_flag: str (spelling used when auto-appending; default: first name)
 
 Flags are parsed as `--flag value` or `--flag=value`. Unlisted flags,
@@ -49,7 +48,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import yaml
 from broker import Broker
@@ -70,16 +69,6 @@ MAX_OUTPUT = int(os.environ.get("TOOL_MAX_OUTPUT", "262144"))
 
 SHELL_META = re.compile("[;|&$`!\n\r]")
 AZ_LOGIN_TIMEOUT_S = int(os.environ.get("AZ_LOGIN_TIMEOUT_S", "30"))
-
-# Format check for params marked `docker_image: true` in tools.yaml.
-# Permissive on purpose (single-component names like "nginx" are valid);
-# RunPod/the registry is the final judge.
-DOCKER_IMAGE_RE = re.compile(
-    r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*"
-    r"(?::[A-Za-z0-9._-]+)?(?:@[A-Za-z0-9:._-]+)?$"
-)
-# RunPod-style port lists, e.g. "22/tcp" or "22/tcp,8888/http".
-PORT_LIST_RE = re.compile(r"^\d+/(tcp|udp|http|https)(,\d+/(tcp|udp|http|https))*$")
 
 broker = Broker()
 server = MCPServer("tool-gateway")
@@ -290,28 +279,29 @@ def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
         return _error_result(e)
 
 
-def _check_global(value: str) -> str:
-    """Global checks for every argv element: shell-meta + workspace confinement."""
+def _check_token(value: str) -> str:
+    """Global check for every argv element: reject shell metacharacters."""
     if SHELL_META.search(value):
         raise ValueError(f"rejected shell metacharacters in: {value!r}")
-    return _maybe_confine(value)
+    return value
 
 
 def _maybe_confine(value: str) -> str:
     """Confine path-like values to the workspace; leave plain tokens untouched.
 
-    Absolute paths must resolve inside REPO_ROOT. Relative values that look
-    like paths (contain a slash, parent refs, or obvious file endings) are
-    resolved against REPO_ROOT, rejected on escape, and returned absolute.
+    Only called for arguments marked `path: true` in tools.yaml. Absolute
+    paths must resolve inside REPO_ROOT. Relative values that look like paths
+    (contain a slash, parent refs, or obvious file endings) are resolved
+    against REPO_ROOT, rejected on escape, and returned absolute.
     Plain tokens (flags, names, URLs, IDs) pass through unchanged.
     """
     if not isinstance(value, str) or not value:
         return value
     stripped = value.strip()
     if (
-        # "://" never occurs in a workspace path; positional args (e.g. azcopy
-        # source/dest URLs) cannot be marked via per-flag params, so URLs pass
-        # through globally.
+        # "://" never occurs in a workspace path; a positional marked
+        # `path: true` may still hold a URL (e.g. azcopy source/dest), so
+        # URLs always pass through.
         "://" in value
         # A JSON object is never a path (e.g. runpodctl --env '{"K":"V"}').
         or (stripped.startswith("{") and stripped.endswith("}"))
@@ -344,61 +334,86 @@ def _maybe_confine(value: str) -> str:
     return str(resolved)
 
 
+def _spec_is_positional(spec: dict) -> bool:
+    return spec.get("positional") is not None
+
+
 def _spec_names(spec: dict) -> list[str]:
     if spec.get("names"):
         return [str(n) for n in spec["names"]]
     return [str(spec.get("name"))]
 
 
-def _parse_flags(trailing: list[str]) -> list[tuple[str | None, str | None]]:
-    """Parse trailing argv into (flag, value) pairs.
+def _spec_positionals(spec: dict) -> list[int]:
+    """Return validated 1-based positional indices (int or list in yaml)."""
+    raw = spec.get("positional")
+    if raw is None:
+        return []
+    if isinstance(raw, bool):
+        raise ValueError(  # noqa: TRY004 - config error, not a type error
+            f"positional must be an int or list of ints: {spec!r}"
+        )
+    if isinstance(raw, int):
+        values: list[Any] = [raw]
+    elif isinstance(raw, (list, tuple)):
+        values = list(raw)
+    else:
+        raise ValueError(  # noqa: TRY004 - config error, not a type error
+            f"positional must be an int or list of ints: {spec!r}"
+        )
+    indices: list[int] = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"positional indices must be ints >= 1: {spec!r}")
+        indices.append(value)
+    return indices
 
-    `--flag value`, `--flag=value`, lone `--flag` (value None),
-    and positionals (flag None, value = token).
+
+class _Arg(NamedTuple):
+    flag: str | None
+    value: str | None
+    joined: bool
+    pos_index: int | None
+
+
+def _parse_flags(trailing: list[str]) -> list[_Arg]:
+    """Parse trailing argv into records.
+
+    `--flag value`, `--flag=value`, lone `--flag` (value None), and
+    positionals (flag None) carrying their 0-based index among positionals.
     """
-    pairs: list[tuple[str | None, str | None]] = []
+    records: list[_Arg] = []
+    pidx = 0
     i = 0
     while i < len(trailing):
         tok = trailing[i]
         if tok.startswith("-") and len(tok) > 1 and "=" in tok:
             flag, _, val = tok.partition("=")
-            pairs.append((flag, val))
+            records.append(_Arg(flag, val, True, None))
             i += 1
         elif tok.startswith("-") and len(tok) > 1:
             if i + 1 < len(trailing) and not (
                 trailing[i + 1].startswith("-") and len(trailing[i + 1]) > 1
             ):
-                pairs.append((tok, trailing[i + 1]))
+                records.append(_Arg(tok, trailing[i + 1], False, None))
                 i += 2
             else:
-                pairs.append((tok, None))
+                records.append(_Arg(tok, None, False, None))
                 i += 1
         else:
-            pairs.append((None, tok))
+            records.append(_Arg(None, tok, False, pidx))
+            pidx += 1
             i += 1
-    return pairs
+    return records
 
 
 def _check_value(spec: dict | None, value: str) -> str:
-    """Check a flag value: shell-meta always; path confinement by default.
-
-    Values of flags marked `docker_image: true`, `url: true`, or `ports: true`
-    in tools.yaml are not paths, so confinement is skipped (after a fail-fast
-    format check). Everything else goes through _maybe_confine.
-    """
+    """Check an argument value: shell-meta always; confine if `path: true`."""
     if SHELL_META.search(value):
         raise ValueError(f"rejected shell metacharacters in: {value!r}")
-    if spec is not None and (
-        spec.get("docker_image") or spec.get("url") or spec.get("ports")
-    ):
-        if spec.get("docker_image") and not DOCKER_IMAGE_RE.match(value):
-            raise ValueError(f"not a docker image name[:tag][@digest]: {value!r}")
-        if spec.get("url") and "://" not in value:
-            raise ValueError(f"not a URL: {value!r}")
-        if spec.get("ports") and not PORT_LIST_RE.match(value):
-            raise ValueError(f"not a port list (e.g. '22/tcp,8888/http'): {value!r}")
-        return value
-    return _maybe_confine(value)
+    if spec is not None and spec.get("path"):
+        return _maybe_confine(value)
+    return value
 
 
 def _validate_argv(cfg: dict, defaults: dict, argv: list[str]) -> list[str]:
@@ -413,30 +428,47 @@ def _validate_argv(cfg: dict, defaults: dict, argv: list[str]) -> list[str]:
     trailing = [str(x) for x in argv[len(base_argv) :]]
     catch_all = cfg.get("argv_allow_regex")
     catch_rx = re.compile(catch_all) if catch_all else None
-    specs = [p for p in (cfg.get("params") or []) if p.get("name") or p.get("names")]
+    specs = [
+        p
+        for p in (cfg.get("params") or [])
+        if p.get("name") or p.get("names") or _spec_is_positional(p)
+    ]
     rules: dict[str, dict] = {}
+    pos_rules: dict[int, dict] = {}
     for spec in specs:
-        for n in _spec_names(spec):
-            rules[n] = spec
+        if _spec_is_positional(spec):
+            for index in _spec_positionals(spec):
+                pos_rules[index - 1] = spec
+        else:
+            for n in _spec_names(spec):
+                rules[n] = spec
 
-    pairs = _parse_flags(trailing)
-    for flag, val in pairs:
-        if flag is None:
-            continue  # positional: globals + catch-all only
-        spec = rules.get(flag)
+    records = _parse_flags(trailing)
+    for rec in records:
+        spec = (
+            rules.get(rec.flag)
+            if rec.flag is not None
+            else pos_rules.get(rec.pos_index)
+        )
         if spec is None:
-            continue  # unlisted flag: passthrough
-        if val is None:
+            continue  # unlisted argument: passthrough
+        if rec.flag is not None and rec.value is None:
             if spec.get("allow_regex"):
-                raise ValueError(f"flag {flag!r} needs a value")
+                raise ValueError(f"flag {rec.flag!r} needs a value")
             continue
-        if spec.get("allow_regex") and not re.search(spec["allow_regex"], val):
-            raise ValueError(f"flag {flag!r} value not allowed: {val!r}")
+        if (
+            rec.value is not None
+            and spec.get("allow_regex")
+            and not re.search(spec["allow_regex"], rec.value)
+        ):
+            raise ValueError(f"argument {rec.value!r} not allowed")
 
-    # Auto-append defaults for absent flags.
-    present = {flag for flag, _ in pairs if flag is not None}
+    # Auto-append defaults for absent named flags (positionals cannot default).
+    present = {rec.flag for rec in records if rec.flag is not None}
     extra: list[str] = []
     for spec in specs:
+        if _spec_is_positional(spec):
+            continue
         names = _spec_names(spec)
         if any(n in present for n in names):
             continue
@@ -449,33 +481,27 @@ def _validate_argv(cfg: dict, defaults: dict, argv: list[str]) -> list[str]:
 
     full = [str(x) for x in argv] + extra
     checked = full[: len(base_argv)]
-    # Walk raw tokens (preserving `--flag=value` shape) so each value is
-    # checked with its flag's context (docker_image/url skips confinement).
     toks = full[len(base_argv) :]
     for tok in toks:
         if catch_rx and not catch_rx.search(tok):
             raise ValueError(f"argument not allowed: {tok!r}")
-    i = 0
-    while i < len(toks):
-        tok = toks[i]
-        if tok.startswith("-") and len(tok) > 1 and "=" in tok:
-            flag, _, val = tok.partition("=")
-            checked.append(
-                _check_global(flag) + "=" + _check_value(rules.get(flag), val)
-            )
-            i += 1
-        elif tok.startswith("-") and len(tok) > 1:
-            checked.append(_check_global(tok))
-            if i + 1 < len(toks) and not (
-                toks[i + 1].startswith("-") and len(toks[i + 1]) > 1
-            ):
-                checked.append(_check_value(rules.get(tok), toks[i + 1]))
-                i += 2
-            else:
-                i += 1
+    # Walk records (preserving `--flag=value` shape) so each value is checked
+    # with its argument's context (path confinement is opt-in via `path: true`).
+    for rec in _parse_flags(toks):
+        spec = (
+            rules.get(rec.flag)
+            if rec.flag is not None
+            else pos_rules.get(rec.pos_index)
+        )
+        if rec.flag is None:
+            checked.append(_check_value(spec, rec.value))
+        elif rec.value is None:
+            checked.append(_check_token(rec.flag))
+        elif rec.joined:
+            checked.append(_check_token(rec.flag) + "=" + _check_value(spec, rec.value))
         else:
-            checked.append(_check_global(tok))
-            i += 1
+            checked.append(_check_token(rec.flag))
+            checked.append(_check_value(spec, rec.value))
     return checked
 
 
@@ -486,22 +512,22 @@ def _appendix(cfg: dict) -> str:
         f"Full argv must start with: {' '.join(str(x) for x in cfg.get('base_argv', []))}"
     )
     for spec in cfg.get("params") or []:
-        names = _spec_names(spec)
-        label = "/".join(names)
+        if _spec_is_positional(spec):
+            label = "positional " + ", ".join(str(i) for i in _spec_positionals(spec))
+            names: list[str] = []
+        else:
+            names = _spec_names(spec)
+            label = "/".join(names)
         bits = [label]
         if spec.get("allow_regex"):
             bits.append(f"value must match {spec['allow_regex']}")
-        if spec.get("docker_image"):
-            bits.append("value is a docker image name (not a path; no confinement)")
-        if spec.get("url"):
-            bits.append("value is a URL (not a path; no confinement)")
-        if spec.get("ports"):
-            bits.append("value is a port list (not a path; no confinement)")
-        if spec.get("default_from") is not None:
+        if spec.get("path"):
+            bits.append("value is a path confined to the workspace")
+        if names and spec.get("default_from") is not None:
             bits.append(
                 f"default from defaults.{spec['default_from']} appended as {spec.get('default_flag') or names[0]} when absent"
             )
-        elif "default" in spec:
+        elif names and "default" in spec:
             bits.append(f"default {spec['default']!r} appended when absent")
         lines.append("- " + ", ".join(bits))
     if cfg.get("argv_allow_regex"):
@@ -509,7 +535,9 @@ def _appendix(cfg: dict) -> str:
     lines.append(
         "Unlisted flags and positionals are allowed (no restrictions except globals)."
     )
-    lines.append("Globals: shell metacharacters rejected; paths confined to workspace.")
+    lines.append(
+        "Globals: shell metacharacters rejected; paths confined only for arguments marked path: true."
+    )
     lines.append("Pass show_help=true for the command's own help output.")
     return "\n".join(lines)
 
@@ -569,16 +597,32 @@ def _register_all(manifest: dict | None = None) -> None:
         if cfg.get("argv_allow_regex"):
             re.compile(cfg["argv_allow_regex"])  # raise early on bad regex
         for spec in cfg.get("params") or []:
-            names = _spec_names(spec)
-            if not names or any(not n.startswith("-") for n in names):
+            if _spec_is_positional(spec):
+                if spec.get("name") or spec.get("names"):
+                    raise ValueError(
+                        f"param cannot have both names and positional: {spec!r}"
+                    )
+                positionals = _spec_positionals(spec)  # validates ints >= 1
+                names: list[str] = []
+            else:
+                positionals = []
+                names = _spec_names(spec)
+                if any(not n.startswith("-") for n in names):
+                    raise ValueError(
+                        f"param names must be flags starting with '-': {spec!r}"
+                    )
+            if bool(names) == bool(positionals):
                 raise ValueError(
-                    f"param names must be flags starting with '-': {spec!r}"
+                    f"param needs exactly one of names or positional: {spec!r}"
                 )
             if spec.get("allow_regex"):
                 re.compile(spec["allow_regex"])  # raise early on bad regex
-            for key in ("docker_image", "url", "ports"):
-                if key in spec and not isinstance(spec[key], bool):
-                    raise ValueError(f"param {key!r} must be true/false: {spec!r}")
+            if "path" in spec and not isinstance(spec["path"], bool):
+                raise ValueError(f"param 'path' must be true/false: {spec!r}")
+            if positionals and any(
+                key in spec for key in ("default", "default_from", "default_flag")
+            ):
+                raise ValueError(f"positional param cannot have defaults: {spec!r}")
         fn = _make_fn(cfg, defaults)
         server.add_tool(
             fn,

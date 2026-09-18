@@ -8,9 +8,10 @@
 # Schema per tool:
 #   name, description, creds, needs_az_login, base_argv (enforced prefix),
 #   help_argv ([--help]), argv_allow_regex (catch-all over trailing args),
-#   params: [{name|--names (flag tokens), allow_regex (on the value),
-#             docker_image|url|ports (value is not a path: skip confinement),
-#             default/default_from (appended when flag absent), default_flag}].
+#   params: [{names (flag tokens) XOR positional (1-based index or list),
+#             allow_regex (on the value), path (confine value to workspace),
+#             default/default_from/default_flag (named flags only)}].
+# Path confinement is opt-in per argument via `path: true`.
 # Unlisted flags and positionals are allowed (globals only).
 defaults:
   resource_group: rg-twitter-ml
@@ -45,6 +46,8 @@ tools:
     needs_az_login: true
     base_argv: [az, ml, job, create]
     params:
+      - names: [--file, -f]
+        path: true
       - names: [-g, --resource-group]
         allow_regex: "^rg-[a-z0-9-]+$"
         default_from: resource_group
@@ -76,12 +79,18 @@ tools:
     creds: [AZCOPY_AUTO_LOGIN_TYPE, AZCOPY_TENANT_ID, AZCOPY_SPA_APPLICATION_ID, AZCOPY_SPA_CLIENT_SECRET]
     base_argv: [azcopy, copy]
     argv_allow_regex: "^(https://.*\\.blob\\.core\\.windows\\.net/.*|[^:]+)$"
+    params:
+      - positional: [1, 2]
+        path: true
 
   - name: azcopy_list
     description: AzCopy list passthrough constrained to blob storage URLs.
     creds: [AZCOPY_AUTO_LOGIN_TYPE, AZCOPY_TENANT_ID, AZCOPY_SPA_APPLICATION_ID, AZCOPY_SPA_CLIENT_SECRET]
     base_argv: [azcopy, list]
     argv_allow_regex: "^(https://.*\\.blob\\.core\\.windows\\.net/.*|[^:]+)$"
+    params:
+      - positional: 1
+        path: true
 
   # RunPod
 
@@ -89,11 +98,6 @@ tools:
     description: Create a RunPod pod with passthrough options.
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, pod, create]
-    params:
-      - names: [--image]
-        docker_image: true
-      - names: [--ports]
-        ports: true
 
   - name: runpodctl_pod_list
     description: List running (and stopped with --all) pods that currently exist on RunPod.
@@ -117,11 +121,6 @@ tools:
       Secrets stored on runopd can be injected as environment variables prefixed with RUNPOD_SECRET_ (e.g. `API_KEY={{ RUNPOD_SECRET_openai_key }}`).
     creds: [RUNPOD_API_KEY, RUNPOD_REGISTRY_AUTH_ID]
     base_argv: [runpodctl, template, create]
-    params:
-      - names: [--image]
-        docker_image: true
-      - names: [--ports]
-        ports: true
 
   - name: runpodctl_template_delete
     description: Delete a RunPod template by id.

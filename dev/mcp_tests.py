@@ -294,7 +294,7 @@ def test_runpodctl_forwards_valid_options():
     assert m.call_args[0][0][:3] == ["runpodctl", "pod", "create"]
 
 
-def test_template_image_skips_confinement():
+def test_template_image_passthrough():
     with patch.object(server_mod.subprocess, "run") as m:
         m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         out = server_mod.call_tool(
@@ -328,76 +328,62 @@ def test_template_image_eq_form_preserved():
     assert "--image=runpod/pytorch:2.1.0" in m.call_args[0][0]
 
 
-def test_template_image_rejects_path():
-    out = server_mod.call_tool(
-        "runpodctl_template_create",
-        argv=[
-            "runpodctl",
-            "template",
-            "create",
-            "--name",
-            "t",
-            "--image",
-            "/etc/passwd",
-        ],
-    )
-    assert "returncode: 1" in out and "docker image" in out
-
-
-def test_unmarked_slash_value_still_confined(tmp_ws):
+def test_unmarked_slash_value_passthrough():
     with patch.object(server_mod.subprocess, "run") as m:
         m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         server_mod.call_tool(
             "gh_pr", argv=["gh", "pr", "list", "--repo", "o/r", "--limit", "5"]
         )
-    assert str(tmp_ws / "o" / "r") in m.call_args[0][0]
+    assert "o/r" in m.call_args[0][0]
 
 
-def test_url_param_skips_confinement():
-    cfg = {"base_argv": ["foo"], "params": [{"names": ["--u"], "url": True}]}
-    out = server_mod._validate_argv(cfg, {}, ["foo", "--u", "https://x.example/a/b"])
-    assert out == ["foo", "--u", "https://x.example/a/b"]
-    with pytest.raises(ValueError, match="not a URL"):
-        server_mod._validate_argv(cfg, {}, ["foo", "--u", "not-a-url"])
+def test_path_flag_confines_to_workspace(tmp_ws):
+    cfg = {"base_argv": ["foo"], "params": [{"names": ["--f"], "path": True}]}
+    out = server_mod._validate_argv(cfg, {}, ["foo", "--f", "sub/data.yaml"])
+    assert out == ["foo", "--f", str(tmp_ws / "sub" / "data.yaml")]
+    with pytest.raises(ValueError, match="outside workspace"):
+        server_mod._validate_argv(cfg, {}, ["foo", "--f", "/etc/passwd"])
 
 
-def test_template_ports_skips_confinement():
-    with patch.object(server_mod.subprocess, "run") as m:
-        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-        out = server_mod.call_tool(
-            "runpodctl_template_create",
-            argv=[
-                "runpodctl",
-                "template",
-                "create",
-                "--name",
-                "t",
-                "--image",
-                "nginx",
-                "--ports",
-                "22/tcp,8888/http",
-            ],
-        )
-    assert "returncode: 0" in out
-    assert "22/tcp,8888/http" in m.call_args[0][0]
+def test_path_flag_passes_urls_through(tmp_ws):
+    cfg = {"base_argv": ["foo"], "params": [{"positional": 1, "path": True}]}
+    url = "https://acct.blob.core.windows.net/c/x"
+    assert server_mod._validate_argv(cfg, {}, ["foo", url]) == ["foo", url]
 
 
-def test_template_ports_rejects_path():
-    out = server_mod.call_tool(
-        "runpodctl_template_create",
-        argv=[
-            "runpodctl",
-            "template",
-            "create",
-            "--name",
-            "t",
-            "--image",
-            "nginx",
-            "--ports",
-            "configs/x.yaml",
-        ],
+def test_positional_index_counts_only_positionals(tmp_ws):
+    cfg = {"base_argv": ["foo"], "params": [{"positional": 2, "path": True}]}
+    out = server_mod._validate_argv(
+        cfg, {}, ["foo", "--flag", "notapath", "file.yaml", "sub/x.yaml"]
     )
-    assert "returncode: 1" in out and "port list" in out
+    assert out == [
+        "foo",
+        "--flag",
+        "notapath",
+        "file.yaml",
+        str(tmp_ws / "sub" / "x.yaml"),
+    ]
+
+
+def test_positional_path_rejects_outside_workspace(tmp_ws):
+    cfg = {"base_argv": ["foo"], "params": [{"positional": 1, "path": True}]}
+    with pytest.raises(ValueError, match="outside workspace"):
+        server_mod._validate_argv(cfg, {}, ["foo", "/etc/passwd"])
+
+
+def test_positional_selector_validation():
+    bad = [
+        {"positional": 0},
+        {"positional": True},
+        {"positional": "1"},
+        {"names": ["--a"], "positional": 1},
+        {"positional": 1, "default": "x"},
+        {},
+    ]
+    for spec in bad:
+        manifest = {"tools": [{"name": "t", "base_argv": ["t"], "params": [spec]}]}
+        with pytest.raises(ValueError):
+            server_mod._register_all(manifest)
 
 
 def test_azcopy_rejects_non_blob_url():
