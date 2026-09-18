@@ -91,8 +91,12 @@ if [ "$AUTO_STOP" -eq 1 ]; then
           --resource-group "$AZURE_RESOURCE_GROUP" \
           --workspace-name "$AZUREML_WORKSPACE" \
           --query path -o tsv)"
-        DS_NAME="$(printf '%s' "$ASSET_PATH" | sed -e 's#^azureml://datastores/##' -e 's#/.*$##')"
-        DS_PREFIX="$(printf '%s' "$ASSET_PATH" | sed -e 's#^azureml://datastores/[^/]*/paths/##' -e 's#^/##' -e 's#/$##')"
+        # `az ml data show` returns the path in short form
+        # (azureml://datastores/<datastore>/paths/<prefix>/) or fully
+        # qualified (azureml://subscriptions/.../datastores/<datastore>/paths/<prefix>/);
+        # handle both.
+        DS_NAME="$(printf '%s' "$ASSET_PATH" | sed -e 's#.*/datastores/##' -e 's#/.*$##')"
+        DS_PREFIX="$(printf '%s' "$ASSET_PATH" | sed -e 's#.*/paths/##' -e 's#^/##' -e 's#/$##')"
         ACCT_NAME="$(az ml datastore show --name "$DS_NAME" \
           --subscription "$AZURE_SUBSCRIPTION_ID" \
           --resource-group "$AZURE_RESOURCE_GROUP" \
