@@ -1,6 +1,7 @@
-# GPU training image. torch comes from the base image; the `torch` extra
-# leaves torch unpinned on purpose so pip keeps the base image's CUDA
-# build instead of reinstalling it. All other deps come from
+# GPU training image. The `torch` extra in pyproject.toml leaves torch unpinned
+# on purpose so pip keeps the base image's CUDA build instead of reinstalling
+# it; torch/torchvision are then pinned to a coherent pair below (the base RC
+# image can ship mismatched builds). All other deps come from
 # pyproject.toml (single source of truth) — see the `torch` extra.
 #
 # Build context: repo root (so ./twitter and ./configs can be baked in).
@@ -19,6 +20,13 @@ COPY ./twitter ./twitter
 RUN pip install --no-cache-dir --ignore-installed blinker ".[torch]" && \
     pip install --no-cache-dir azure-cli && \
     az extension add --name ml --yes
+# Pin a coherent torch/torchvision pair (torch 2.9.0 <-> torchvision 0.24.0).
+# The base RC image can ship a torchvision whose compiled ops don't match its
+# torch, which surfaces as
+# `AttributeError: partially initialized module 'torchvision' ...` on
+# `import torchvision` (pulled in via lightning -> torchmetrics), before any
+# training code runs.
+RUN pip install --no-cache-dir "torch==2.9.0" "torchvision==0.24.0"
 
 COPY ./configs ./configs
 
