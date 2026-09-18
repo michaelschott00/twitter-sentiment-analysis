@@ -48,7 +48,12 @@ class Broker:
             if val := os.environ.get(name):
                 env[name] = val
         # Non-secret config passthrough (safe to share across tools).
-        for name in ("AZURE_SUBSCRIPTION_ID", "AZURE_CONFIG_DIR", "PORT"):
+        for name in (
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_CONFIG_DIR",
+            "AZURE_EXTENSION_DIR",
+            "PORT",
+        ):
             if val := os.environ.get(name):
                 env[name] = val
         for name in creds:

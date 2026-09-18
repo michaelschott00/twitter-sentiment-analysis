@@ -60,7 +60,12 @@ from redact import redact
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent  # /workspace when mounted
 TOOLS_YAML = Path(os.environ.get("TOOLS_YAML", HERE.parent / "tools.yaml"))
-AUDIT_LOG = Path(os.environ.get("AUDIT_LOG", "/tmp/tool-gateway-audit.jsonl"))
+# Common ancestor for gateway logs; override AUDIT_LOG/AZ_LOGIN_LOG to split them.
+LOG_DIR = Path(os.environ.get("LOG_DIR", "/tmp"))
+AUDIT_LOG = Path(os.environ.get("AUDIT_LOG", LOG_DIR / "tool-gateway-audit.jsonl"))
+AZ_LOGIN_LOG = Path(
+    os.environ.get("AZ_LOGIN_LOG", LOG_DIR / "tool-gateway-azure-login.jsonl")
+)
 TIMEOUT_S = int(os.environ.get("TOOL_TIMEOUT_S", "120"))
 MAX_OUTPUT = int(os.environ.get("TOOL_MAX_OUTPUT", "262144"))
 
@@ -163,6 +168,26 @@ def _audit(
         pass
 
 
+def _az_log(event: str, **fields: Any) -> None:
+    """Append one JSONL azure-login record next to the audit trail.
+
+    String fields are passed through the same redaction as tool output so
+    credential material never lands on disk. Never raises: login logging
+    must not affect tool invocations.
+    """
+    try:
+        secrets = broker.secret_values()
+        safe = {
+            k: (redact(v, secrets)[0] if isinstance(v, str) else v)
+            for k, v in fields.items()
+        }
+        AZ_LOGIN_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(AZ_LOGIN_LOG, "a") as f:
+            f.write(json.dumps({"ts": time.time(), "event": event, **safe}) + "\n")
+    except Exception:  # noqa: BLE001, S110 - login logging must never break tools
+        pass
+
+
 def _az_config_dir(env: dict[str, str]) -> str:
     """Isolated AZURE_CONFIG_DIR for one SP so token caches never mix."""
     digest = hashlib.sha256(
@@ -183,14 +208,17 @@ def _az_login_lock(key: str) -> threading.Lock:
 
 
 def _ensure_az_login(env: dict[str, str]) -> str | None:
-    """Ensure `az` is authenticated using only the scoped env. Returns error or None."""
+    """Ensure `az` is authenticated using only the scoped env. Returns error or None.
+    Locks on AZURE_CONFIG_DIR ensure concurrent login calls don't trigger multiple logins."""
     client_id = env.get("AZURE_CLIENT_ID")
     tenant_id = env.get("AZURE_TENANT_ID")
     client_secret = env.get("AZURE_CLIENT_SECRET")
     if not client_id or not tenant_id or not client_secret:
+        _az_log("missing_credentials")
         return "returncode: 1\nerror: azure login unavailable: missing credentials"
     env.setdefault("AZURE_CONFIG_DIR", _az_config_dir(env))
-    lock = _az_login_lock(env["AZURE_CONFIG_DIR"])
+    config_dir = env["AZURE_CONFIG_DIR"]
+    lock = _az_login_lock(config_dir)
     with lock:
         try:
             already = subprocess.run(
@@ -206,6 +234,7 @@ def _ensure_az_login(env: dict[str, str]) -> str | None:
         except Exception:  # noqa: BLE001 - fall through to login attempt
             already = None
         if already is not None and already.returncode == 0:
+            _az_log("already_authenticated", config_dir=config_dir)
             return None
         try:
             result = subprocess.run(
@@ -229,14 +258,27 @@ def _ensure_az_login(env: dict[str, str]) -> str | None:
                 check=False,
             )
         except FileNotFoundError:
+            _az_log("executable_not_found", config_dir=config_dir)
             return "returncode: 127\nerror: executable not found: az"
         except Exception as e:  # noqa: BLE001 - return errors as tool output
+            _az_log(
+                "login_error",
+                config_dir=config_dir,
+                error=f"{type(e).__name__}: {e}",
+            )
             redacted, _ = redact(f"{type(e).__name__}: {e}", broker.secret_values())
             return f"returncode: 1\nerror: azure login failed: {redacted}"
         if result.returncode != 0:
             detail = (result.stderr or "").strip() or "login failed"
+            _az_log(
+                "login_failed",
+                config_dir=config_dir,
+                rc=result.returncode,
+                detail=detail,
+            )
             redacted, _ = redact(detail, broker.secret_values())
             return f"returncode: 1\nerror: azure login failed: {redacted}"
+        _az_log("login_ok", config_dir=config_dir)
         return None
 
 
