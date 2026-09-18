@@ -8,17 +8,33 @@ only the creds listed for that tool in tools.yaml.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import yaml
+
+HERE = Path(__file__).resolve().parent
+TOOLS_YAML = Path(os.environ.get("TOOLS_YAML", HERE.parent / "tools.yaml"))
+
+
+def _load_secret_names() -> list[str]:
+    """Collect every distinct `creds:` env var declared in tools.yaml.
+
+    This keeps the broker's redaction + scoping table in sync with the
+    manifest automatically, so adding a credential to a tool needs no
+    broker.py edit.
+    """
+    with open(TOOLS_YAML) as f:
+        manifest = yaml.safe_load(f) or {}
+    names: dict[str, None] = {}
+    for tool in manifest.get("tools", []) or []:
+        for name in tool.get("creds", []) or []:
+            names[name] = None
+    return list(names)
+
 
 # Secrets: exact env var names treated as credentials (redacted + scoped).
 # Non-secret config (subscription IDs, defaults) passes through separately.
-SECRET_NAMES = [
-    "GH_TOKEN",
-    "RUNPOD_API_KEY",
-    "AZURE_CLIENT_ID",
-    "AZURE_TENANT_ID",
-    "AZURE_CLIENT_SECRET",
-    "OPENAI_API_KEY",
-]
+SECRET_NAMES = _load_secret_names()
 
 MINIMAL_PASSTHROUGH = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TZ"]
 
