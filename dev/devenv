@@ -2,13 +2,14 @@
 
 usage() {
   echo "Usage: $(basename "$0") {up|agent|dev|down|rebuild}"
-  echo "  up       - docker compose up -d"
-  echo "  agent    - run dev container and start agent"
-  echo "  dev      - run dev container"
-  echo "  gateway  - run gateway container"
-  echo "  down     - docker compose down"
-  echo "  restart  - docker compose down and up"
-  echo "  rebuild  - docker compose down && docker compose build"
+  echo "  up              - docker compose up -d"
+  echo "  agent           - run dev container and start agent"
+  echo "  dev             - run dev container"
+  echo "  gateway         - run gateway container"
+  echo "  down            - docker compose down"
+  echo "  restart         - docker compose down and up"
+  echo "  rebuild         - docker compose down && docker compose build"
+  echo "  update-gateway  - restart gateway with updated tools.yaml"
 }
 
 case "$1" in
@@ -31,7 +32,10 @@ case "$1" in
     docker compose down && docker compose up -d
     ;;
   rebuild)
-    docker compose down && docker compose build
+    docker compose down && docker compose build && docker compose up -d
+    ;;
+  update-gateway)
+    docker compose down tool-gateway && docker compose up tool-gateway -d
     ;;
   *)
     usage
