@@ -1,3 +1,6 @@
+*.png
+!images/*
+*.bkp
 references/
 data/
 # AML data-asset definitions live under infra/data/ — keep them committed.

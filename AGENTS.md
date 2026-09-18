@@ -1,6 +1,7 @@
 - This environment is a docker container built from `dev/dev.Dockerfile` and `compose.yaml`. All changes to the environment should be documented in these files for future runs. The `docker` command itself is not available.
-- Tools requiring authentication are not available on the cli because this environment does not contain any credentials. For most actions, mcp tools are available with the mcp servers handling the authentication.
-- Terraform is run on Terraform HCP, so terraform cannot be run locally.
+- The local environment has no GPU (only intel integrated graphics).
+- Tools requiring authentication are not available on the cli because this environment does not contain any credentials. That is, no GH_TOKEN, RUNPOD_API_KEY, etc. in this container. For most actions, mcp tools are available with the mcp servers handling the authentication.
+- Terraform is run on Terraform HCP, so `terraform plan/apply` cannot be run locally.
 - Python packages need to be installed with `--break-system-packages`. `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file.
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - Scripts with `click` based CLI are always preferred over jupyter notebooks.

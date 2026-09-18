@@ -1,0 +1,253 @@
+<mxfile host="Electron">
+  <diagram id="UuZOgzs_9T_a3pdLf_-m" name="Page-1">
+    <mxGraphModel dx="467" dy="276" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2260" pageHeight="1020" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="localDev" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#333333;container=1;collapsible=0;spacingTop=6;" value="Local Dev (Docker / compose.yaml)" vertex="1">
+          <mxGeometry height="460" width="420" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="DEV" parent="localDev" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="dev container&#xa;python:3.12&#xa;opencode / hermes" vertex="1">
+          <mxGeometry height="61" width="126" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="CODE" parent="localDev" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="twitter/ + configs/" vertex="1">
+          <mxGeometry height="34" width="120" x="40" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="ENVDEF" parent="localDev" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="infra/environments/&#xa;Dockerfile +&#xa;twitter-ml-env.yaml" vertex="1">
+          <mxGeometry height="61" width="129" x="40" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="runpod" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff3e6;strokeColor=#d79b00;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#8a4b00;container=1;collapsible=0;spacingTop=6;" value="RunPod (external GPU)" vertex="1">
+          <mxGeometry height="260" width="420" x="40" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="POD" parent="runpod" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="GPU Pod&#xa;(RTX A4000 / 4090)&#xa;python -m twitter.main" vertex="1">
+          <mxGeometry height="61" width="147" x="60" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="azureRG" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eaf2fb;strokeColor=#6c8ebf;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#1f4e79;container=1;collapsible=0;spacingTop=6;" value="Azure Resource Group: rg-twitter-ml" vertex="1">
+          <mxGeometry height="900" width="1500" x="680" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="WS_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Azure ML Workspace&#xa;mlw-twitter-sentiment" vertex="1">
+          <mxGeometry height="46" width="184" y="138" as="geometry" />
+        </mxCell>
+        <mxCell id="ACR" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=https://app.diagrams.net/img/lib/azure2/containers/Container_Registries.svg;" value="" vertex="1">
+          <mxGeometry height="64" width="64" x="30" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="ACR_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Container Registry&#xa;crtwitterml" vertex="1">
+          <mxGeometry height="46" width="124" y="318" as="geometry" />
+        </mxCell>
+        <mxCell id="ST" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=https://app.diagrams.net/img/lib/azure2/storage/Storage_Accounts.svg;" value="" vertex="1">
+          <mxGeometry height="64" width="64" x="180" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="ST_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Storage Account&#xa;sttwitterml&#xa;raw / splits / external / models" vertex="1">
+          <mxGeometry height="56" width="164" x="130" y="318" as="geometry" />
+        </mxCell>
+        <mxCell id="KV" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=https://app.diagrams.net/img/lib/azure2/security/Key_Vaults.svg;" value="" vertex="1">
+          <mxGeometry height="64" width="64" x="330" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="KV_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Key Vault&#xa;kv-twitter-ml" vertex="1">
+          <mxGeometry height="46" width="124" x="300" y="318" as="geometry" />
+        </mxCell>
+        <mxCell id="AI" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=https://app.diagrams.net/img/lib/azure2/devops/Application_Insights.svg;" value="" vertex="1">
+          <mxGeometry height="64" width="64" x="480" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="AI_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Application Insights&#xa;+ Log Analytics" vertex="1">
+          <mxGeometry height="46" width="124" x="450" y="318" as="geometry" />
+        </mxCell>
+        <mxCell id="CPU" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=https://app.diagrams.net/img/lib/azure2/compute/Virtual_Machine.svg;" value="" vertex="1">
+          <mxGeometry height="64" width="64" x="60" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="CPU_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Compute Cluster&#xa;cluster-cpu (dedicated)&#xa;Standard_DS3_v2" vertex="1">
+          <mxGeometry height="56" width="204" x="-10" y="538" as="geometry" />
+        </mxCell>
+        <mxCell id="SP" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=https://app.diagrams.net/img/lib/azure2/identity/Azure_Active_Directory.svg;" value="" vertex="1">
+          <mxGeometry height="64" width="64" x="240" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="SP_lbl" parent="azureRG" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#333333;fontFamily=Helvetica;" value="Service Principal&#xa;runpod-mlflow-sp&#xa;(AzureAD app + secret)" vertex="1">
+          <mxGeometry height="56" width="200" x="172" y="538" as="geometry" />
+        </mxCell>
+        <mxCell id="MLFLOW" parent="azureRG" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="MLflow Tracking&#xa;(Workspace-managed)&#xa;&#xa;MLFLOW_TRACKING_URI=&#xa;azureml://&lt;ws&gt;.ml.azure.com" vertex="1">
+          <mxGeometry height="88" width="187" x="420" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="amlInternals" parent="azureRG" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f0fa;strokeColor=#9673a6;verticalAlign=top;fontSize=12;fontStyle=1;fontColor=#5b3a75;container=1;collapsible=0;pointerEvents=0;spacingTop=6;" value="Azure ML Workspace Internals" vertex="1">
+          <mxGeometry height="500" width="760" x="720" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="DS" parent="amlInternals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="Datastore&#xa;(azureml blob)" vertex="1">
+          <mxGeometry height="47" width="101" x="30" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="DA" parent="amlInternals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="Data Assets&#xa;twitter-raw@1, twitter-splits@2" vertex="1">
+          <mxGeometry height="47" width="192" x="430" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="JOB" parent="amlInternals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="Command Job (CPU only)&#xa;twitter-train-baseline: lightgbm&#xa;+ mlflow logging" vertex="1">
+          <mxGeometry height="61" width="192" x="30" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="ENV" parent="amlInternals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="Environment&#xa;twitter-ml:py3.12-cuda&#xa;(dockerized)" vertex="1">
+          <mxGeometry height="61" width="146" x="430" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="REG" parent="amlInternals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="Model Registry&#xa;twitter-bert-clf:3&#xa;+ MLflow registry" vertex="1">
+          <mxGeometry height="61" width="117" x="30" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="EP" parent="amlInternals" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontColor=#1f2933;fontFamily=Helvetica;" value="Managed Online Endpoint&#xa;tw-sentiment&#xa;(deployment: blue, 0-1 inst)" vertex="1">
+          <mxGeometry height="61" width="174" x="430" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="0FJuKfYgyrMtpSEF2YKR-1" parent="azureRG" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" value="" vertex="1">
+          <mxGeometry height="68" width="64" x="60" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dev_rg" edge="1" parent="1" source="DEV" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="azureRG" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="160" />
+              <mxPoint x="540" y="100" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_code_ws" edge="1" parent="1" source="CODE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="560" y="290" />
+              <mxPoint x="560" y="162" />
+            </Array>
+            <mxPoint x="740" y="162" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_code_pod" edge="1" parent="1" source="CODE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="POD" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="500" y="290" />
+              <mxPoint x="500" y="660" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_envdef_acr" edge="1" parent="1" source="ENVDEF" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="ACR" value="">
+          <mxGeometry relative="1" x="-0.0179" y="10" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="580" y="420" />
+              <mxPoint x="580" y="342" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_sp_pod" edge="1" parent="1" source="SP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="POD" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="620" y="562" />
+              <mxPoint x="620" y="700" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_pod_ws" edge="1" parent="1" source="POD" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="710" />
+              <mxPoint x="660" y="162" />
+            </Array>
+            <mxPoint x="740" y="162" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_st_cpu" edge="1" parent="1" source="ST" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="CPU" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="892" y="470" />
+              <mxPoint x="772" y="470" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cpu_job" edge="1" parent="1" source="CPU" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="JOB" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1090" y="562" />
+              <mxPoint x="1090" y="290" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_job_mlflow" edge="1" parent="1" source="JOB" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="MLFLOW" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1360" y="360" />
+              <mxPoint x="1360" y="415" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_pod_mlflow" edge="1" parent="1" source="POD" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="MLFLOW" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="200" y="890" />
+              <mxPoint x="1200" y="890" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_job_reg" edge="1" parent="1" source="JOB" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="REG" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pod_reg" edge="1" parent="1" source="POD" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="REG" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="330" y="930" />
+              <mxPoint x="1580" y="930" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_reg_ep" edge="1" parent="1" source="REG" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;fontColor=#444444;fontSize=10;endArrow=classic;labelBackgroundColor=#ffffff;" target="EP" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ws_st" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;endArrow=none;" target="ST" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="804" y="162" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ws_kv" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;endArrow=none;" target="KV" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="804" y="162" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ws_acr" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;endArrow=none;" target="ACR" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="772" y="194" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ws_ai" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#666666;endArrow=none;" target="AI" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="804" y="162" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lbl_dev_rg" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="git push dev&#xa;→ HCP plan/apply" vertex="1">
+          <mxGeometry height="36" width="175" x="445" y="105" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_code_ws" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="AML SDK job submit (CPU)&#xa;+ mlflow logging" vertex="1">
+          <mxGeometry height="38" width="195" x="460" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_code_pod" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="docker build / sync (GPU)" vertex="1">
+          <mxGeometry height="32" width="190" x="405" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_envdef_acr" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="az ml environment create&#xa;(register twitter-ml-env)" vertex="1">
+          <mxGeometry height="38" width="220" x="470" y="355" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_sp_pod" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="SP auth&#xa;+ MLFLOW_TRACKING_URI" vertex="1">
+          <mxGeometry height="38" width="190" x="525" y="615" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_pod_ws" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="reads splits&#xa;logs · registers" vertex="1">
+          <mxGeometry height="38" width="170" x="570" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_st_cpu" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="blob mount / download" vertex="1">
+          <mxGeometry height="28" width="180" x="745" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_cpu_job" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="runs" vertex="1">
+          <mxGeometry height="26" width="80" x="960" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_job_mlflow" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="logs params/&#xa;metrics/artifacts" vertex="1">
+          <mxGeometry height="38" width="126" x="1302" y="368" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_pod_mlflow" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="logs params/&#xa;metrics/artifacts" vertex="1">
+          <mxGeometry height="34" width="180" x="610" y="862" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_job_reg" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="registers" vertex="1">
+          <mxGeometry height="28" width="120" x="1520" y="403" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_pod_reg" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="registers" vertex="1">
+          <mxGeometry height="26" width="120" x="870" y="908" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl_reg_ep" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#444444;fontFamily=Helvetica;" value="deploys" vertex="1">
+          <mxGeometry height="28" width="116" x="1722" y="486" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
