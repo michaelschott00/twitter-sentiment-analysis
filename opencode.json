@@ -6,6 +6,12 @@
       "url": "http://tool-gateway:8004/mcp",
       "enabled": true,
       "oauth": false
+    },
+    "drawio": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "-y", "@drawio/mcp"],
     }
+
   }
 }

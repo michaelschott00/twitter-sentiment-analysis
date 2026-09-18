@@ -13,6 +13,7 @@ ARG TERRAFORM_VERSION=1.16.1
 ARG AZURE_CLI_VERSION=2.90.0
 ARG AZCOPY_VERSION=10.32.7
 ARG ML_EXTENSION_VERSION=2.44.1
+ARG DRAWIO_VERSION=31.4.5
 
 # BuildKit cache mounts (--mount=type=cache) keep downloaded artifacts across
 # rebuilds, so an invalidated layer does not force re-downloading:
@@ -95,6 +96,41 @@ RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=lock
     && tar -xzf /var/cache/downloads/azcopy_${AZCOPY_VERSION}.tar.gz -C /var/cache/downloads \
     && install -m 755 /var/cache/downloads/azcopy_linux_amd64_${AZCOPY_VERSION}/azcopy /usr/local/bin/azcopy
 
+# Install draw.io desktop CLI for the drawio skill. draw.io is an Electron app,
+# so headless CLI use (Mermaid -> .drawio conversion, ELK --layout, PNG/SVG/PDF
+# export) needs an X server (xvfb/xvfb-run), fontconfig plus a font so exported
+# diagrams render text, and Chromium's runtime libs. The .deb is installed via
+# apt so its Depends resolve to trixie's t64 package names (libgtk-3-0 ->
+# libgtk-3-0t64, libatspi2.0-0 -> libatspi2.0-0t64, ...); libgbm1 and
+# libasound2t64 are linked by Electron but are not listed in the .deb Depends.
+# nodejs/npm provide `npx` for the drawio MCP server (opencode.json) and `node`
+# for the skill's URL output. ELECTRON_DISABLE_SANDBOX is required: as an
+# Electron app it otherwise tries to create user namespaces, which are blocked
+# in this container and kill it with a zygote/namespace check failure.
+ENV ELECTRON_DISABLE_SANDBOX=1
+RUN --mount=type=cache,id=apt-dev,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
+    apt-get update \
+    && { [ -f /var/cache/downloads/drawio-amd64-${DRAWIO_VERSION}.deb ] \
+        || curl -fsSL https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_VERSION}/drawio-amd64-${DRAWIO_VERSION}.deb -o /var/cache/downloads/drawio-amd64-${DRAWIO_VERSION}.deb; } \
+    && apt-get install -y --no-install-recommends \
+         /var/cache/downloads/drawio-amd64-${DRAWIO_VERSION}.deb \
+         xvfb xauth fontconfig fonts-dejavu-core libxml2-utils nodejs npm \
+         libgtk-3-0t64 libatspi2.0-0t64 libgbm1 libasound2t64 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libnss3 libatk-bridge2.0-0t64 libcups2t64 libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make a bare `drawio` (as the drawio skill invokes it) work headlessly: run the
+# CLI under xvfb-run whenever no DISPLAY is set. /usr/local/bin precedes
+# /usr/bin on PATH, so this shadows the package's /usr/bin/drawio symlink.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'if [ -z "$DISPLAY" ] && command -v xvfb-run >/dev/null 2>&1; then' \
+      '  exec xvfb-run -a /usr/bin/drawio "$@"' \
+      'fi' \
+      'exec /usr/bin/drawio "$@"' \
+      > /usr/local/bin/drawio \
+    && chmod 755 /usr/local/bin/drawio
+
 # Create unprivileged agent user
 RUN useradd -m -u 1000 agent
 RUN chown -R agent:agent $HOME
@@ -102,6 +138,12 @@ USER agent
 
 # Install the Azure ML extension (as the runtime user, so `az ml` is found)
 RUN az extension add --name ml --version ${ML_EXTENSION_VERSION} --yes
+
+# Pre-populate the npx cache for the drawio MCP server configured in
+# opencode.json (`npx -y @drawio/mcp`) so the local MCP server starts without a
+# network fetch. The server exits once stdin reaches EOF; timeout guards against
+# a build hang if it does not.
+RUN timeout 120 npx -y @drawio/mcp </dev/null >/dev/null 2>&1 || true
 
 # Override python entrypoint
 ENTRYPOINT ["/bin/bash"]
