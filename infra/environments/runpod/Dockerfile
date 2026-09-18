@@ -17,8 +17,16 @@ COPY ./twitter ./twitter
 # python3-blinker 1.7.0 via apt (no RECORD file, uninstallable by pip),
 # while Flask (via mlflow) needs blinker>=1.9. Ignoring the apt copy lets
 # pip install the newer wheel alongside instead of trying to uninstall it.
-RUN pip install --no-cache-dir --ignore-installed blinker ".[torch]" && \
-    pip install --no-cache-dir azure-cli && \
+RUN pip install --no-cache-dir --ignore-installed blinker ".[torch]"
+# azure-cli requires antlr4~=4.13 while omegaconf==2.3.1 requires
+# antlr==4.9.* — installing both into one env upgrades antlr and breaks
+# `import omegaconf` (surfaces in the training CLI as `error: 'omegaconf'`).
+# So the CLI lives in an isolated venv; only the `az` entrypoint is linked
+# into PATH (never the venv's bin dir — its `python` must not shadow the
+# training interpreter).
+RUN python -m venv /opt/azcli && \
+    /opt/azcli/bin/pip install --no-cache-dir azure-cli && \
+    ln -s /opt/azcli/bin/az /usr/local/bin/az && \
     az extension add --name ml --yes
 # Pin a coherent torch/torchvision pair (torch 2.9.0 <-> torchvision 0.24.0).
 # The base RC image can ship a torchvision whose compiled ops don't match its
@@ -27,6 +35,10 @@ RUN pip install --no-cache-dir --ignore-installed blinker ".[torch]" && \
 # `import torchvision` (pulled in via lightning -> torchmetrics), before any
 # training code runs.
 RUN pip install --no-cache-dir "torch==2.9.0" "torchvision==0.24.0"
+# Build-time gate: fail the image build (not a GPU pod at $0.50+/hr) if the
+# training CLI's import chain is broken. Covers torch/torchvision ABI drift
+# and the omegaconf/antlr4 version conflict.
+RUN python -c "import omegaconf, torchvision, torchmetrics, lightning; print('training imports ok')"
 
 COPY ./configs ./configs
 
