@@ -41,6 +41,9 @@ torch = [
     "antlr4-python3-runtime==4.9.3",
     "sacremoses==0.2.0",
     "emoji==2.15.0",
+    # DeBERTa-v3 (microsoft/deberta-v3-large) ships only spm.model and has no
+    # tokenizer.json, so AutoTokenizer needs the sentencepiece backend.
+    "sentencepiece==0.2.2",
     "nltk==3.10.3",
     "tensorboard==2.20.0",
     "matplotlib==3.11.1",

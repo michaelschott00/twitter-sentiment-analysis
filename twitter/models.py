@@ -48,7 +48,13 @@ class TransformerEncoder(nn.Module):
         super().__init__()
 
         self.config = AutoConfig.from_pretrained(name)
-        self.encoder = AutoModel.from_pretrained(name, config=self.config)
+        # transformers>=5 preserves the checkpoint dtype by default. Some
+        # checkpoints (e.g. microsoft/deberta-v3-large) ship fp16 weights, which
+        # then mismatch the fp32 head and break mixed-precision training. Load
+        # the backbone in fp32 and let Lightning's autocast handle precision.
+        self.encoder = AutoModel.from_pretrained(
+            name, config=self.config, dtype=torch.float32
+        )
 
         self.tokenizer = AutoTokenizer.from_pretrained(name, model_max_length=128)
 
