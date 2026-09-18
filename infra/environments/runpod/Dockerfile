@@ -58,6 +58,25 @@ case "${RUNPOD_AUTO_STOP:-}" in
     AUTO_STOP=0
     ;;
 esac
+# The RunPod platform resolves a relative start-command binary against the
+# volume mount path (e.g. `python` arrives as `/workspace/python`) and uses
+# that path as the working directory. Map the binary back onto PATH and run
+# from the baked-in checkout so relative `configs/...` paths resolve.
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    */*)
+      if [ ! -x "$1" ]; then
+        FIXED_CMD="$(command -v "$(basename "$1")" || true)"
+        if [ -n "$FIXED_CMD" ]; then
+          if [ "$#" -gt 1 ]; then set -- "$FIXED_CMD" "${@:2}"; else set -- "$FIXED_CMD"; fi
+        fi
+      fi
+      ;;
+  esac
+fi
+if [ -d /project/configs ]; then
+  cd /project
+fi
 # Download twitter-splits (tweets_{train,dev,test_1,test_2}.csv) so
 # TwitterDataModule(root_dir=data/splits) works. Only for real runs,
 # so `--help` / debug shells don't require Azure credentials.
