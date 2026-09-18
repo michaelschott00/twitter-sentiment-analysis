@@ -44,13 +44,19 @@ RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=lock
     && mkdir -p $HOME/.config/opencode $HOME/.local/share/opencode $HOME/.local/state/opencode \
     && $HOME/.opencode/bin/opencode completion >> $HOME/.bashrc
 
-# Install python packages from pyproject.toml (single source of truth).
+# Install python packages from pyproject.toml (single source of truth) into an
+# isolated project venv, which becomes the default interpreter for every shell.
+# Tools whose pinned deps clash with the project env get their own venv instead
+# of being co-installed here (azure-cli below is the only such case).
 # The CPU torch index is needed so the `torch` extra resolves to CPU wheels.
 ENV PIP_CACHE_DIR=$HOME/.cache/pip
 COPY pyproject.toml README.md ./
 COPY twitter ./twitter
 RUN --mount=type=cache,id=pip-dev,target=$HOME/.cache/pip,sharing=locked \
-    pip install --break-system-packages --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,torch,lgbm,llm]"
+    python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,torch,lgbm,llm]"
+# Put the project venv ahead of the system interpreter on PATH.
+ENV PATH=/opt/venv/bin:$PATH
 
 # Download NLTK data (downloaded into the cache, then copied into the image so
 # the agent user can find it at runtime; the cache keeps rebuilds offline)
@@ -86,9 +92,16 @@ RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=lock
     && unzip -o /var/cache/downloads/terraform_${TERRAFORM_VERSION}.zip -d /var/cache/downloads \
     && install -m 755 /var/cache/downloads/terraform /usr/local/bin/terraform
 
-# Install azure-cli (wheels cached in the pip cache mount; pinned, no `az upgrade`)
+# Install azure-cli in an isolated venv. It requires antlr4~=4.13, while
+# omegaconf==2.3.1 (the `torch` extra) needs antlr4==4.9.*; installing both
+# into one environment upgrades antlr and breaks `import omegaconf`
+# ("Could not deserialize ATN"). Only the `az` entrypoint is exposed on PATH
+# (never the venv's bin dir, so its `python` cannot shadow the project's).
+# Wheels are cached in the pip cache mount; pinned, no `az upgrade`.
 RUN --mount=type=cache,id=pip-dev,target=$HOME/.cache/pip,sharing=locked \
-    pip install --break-system-packages azure-cli==${AZURE_CLI_VERSION}
+    /usr/local/bin/python -m venv /opt/azcli \
+    && /opt/azcli/bin/pip install azure-cli==${AZURE_CLI_VERSION} \
+    && ln -s /opt/azcli/bin/az /usr/local/bin/az
 
 # Install azcopy
 RUN --mount=type=cache,id=downloads-dev,target=/var/cache/downloads,sharing=locked \
@@ -131,9 +144,10 @@ RUN printf '%s\n' \
       > /usr/local/bin/drawio \
     && chmod 755 /usr/local/bin/drawio
 
-# Create unprivileged agent user
+# Create unprivileged agent user. Own both venvs so the runtime user can
+# `pip install` into the project env and `az extension add` can write caches.
 RUN useradd -m -u 1000 agent
-RUN chown -R agent:agent $HOME
+RUN chown -R agent:agent $HOME /opt/venv /opt/azcli
 USER agent
 
 # Install the Azure ML extension (as the runtime user, so `az ml` is found)

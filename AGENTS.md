@@ -2,7 +2,7 @@
 - The local environment has no GPU (only intel integrated graphics).
 - Tools requiring authentication are not available on the cli because this environment does not contain any credentials. That is, no GH_TOKEN, RUNPOD_API_KEY, etc. in this container. For most actions, mcp tools are available with the mcp servers handling the authentication.
 - Terraform is run on Terraform HCP, so `terraform plan/apply` cannot be run locally.
-- Python packages need to be installed with `--break-system-packages`. `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file.
+- `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file. The dev image installs the project into a venv at `/opt/venv` (first on `PATH`), so use `pip`/`python`/`pytest` directly — no `--break-system-packages` is needed (that only applies to the bare system interpreter). Tools whose pinned deps clash with the project env get their own venv (e.g. `/opt/azcli` for azure-cli, to protect `omegaconf`'s antlr pin).
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - Scripts with `click` based CLI are always preferred over jupyter notebooks.
 - Git pushes should go to the `dev` branch of the `origin-http` remote.

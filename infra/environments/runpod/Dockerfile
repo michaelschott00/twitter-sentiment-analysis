@@ -1,11 +1,12 @@
-# GPU training image. The `torch` extra in pyproject.toml leaves torch unpinned
-# on purpose so pip keeps the base image's CUDA build instead of reinstalling
-# it; torch/torchvision are then pinned to a coherent pair below (the base RC
-# image can ship mismatched builds). All other deps come from
-# pyproject.toml (single source of truth) — see the `torch` extra.
+# GPU training image. Built on RunPod's lean CUDA base, which ships no torch,
+# so the whole torch stack is installed from pyproject.toml (the `torch` extra)
+# and this project controls every version. A `runpod/pytorch` base instead
+# ships its own CUDA build that pip won't replace — a `==x.y.z` pin matches
+# `x.y.z+cuNNN` (PEP 440 ignores the local label) — so PyPI's cu128 wheels end
+# up layered on a cu129 torch stack and the CUDA ABIs clash at import.
 #
 # Build context: repo root (so ./twitter and ./configs can be baked in).
-FROM runpod/pytorch:1.1.0-rc.154-cu1290-torch290-ubuntu2404
+FROM runpod/base:1.3.1-cuda1281-ubuntu2404
 
 WORKDIR /project
 
@@ -28,17 +29,12 @@ RUN python -m venv /opt/azcli && \
     /opt/azcli/bin/pip install --no-cache-dir azure-cli && \
     ln -s /opt/azcli/bin/az /usr/local/bin/az && \
     az extension add --name ml --yes
-# Pin a coherent torch/torchvision/torchaudio trio (2.9.0/0.24.0/2.9.0).
-# The base RC image ships a cu129-built stack while PyPI defaults to cu128;
-# mixing them breaks compiled-op checks at import time (torchvision's
-# meta registrations, torchaudio's CUDA version check — the latter is hit
-# unconditionally via transformers.audio_utils and surfaces in the training
-# CLI as `error: ... Could not import module 'pipeline'`).
-RUN pip install --no-cache-dir "torch==2.9.0" "torchvision==0.24.0" "torchaudio==2.9.0"
 # Build-time gate: fail the image build (not a GPU pod at $0.50+/hr) if the
-# training code's import chain is broken. Covers torch CUDA-ABI drift
-# and the omegaconf/antlr4 version conflict.
-RUN python -c "import twitter.data, twitter.models, twitter.modules; print('training imports ok')"
+# training CLI's import chain is broken. `twitter.main` pulls in
+# jsonargparse/omegaconf (the antlr4 version conflict) and
+# `twitter.data`/`models`/`modules` pull in torch, torchmetrics, lightning
+# and transformers (CUDA-ABI drift).
+RUN python -c "import twitter.data, twitter.models, twitter.modules, twitter.main; print('training imports ok')"
 
 COPY ./configs ./configs
 

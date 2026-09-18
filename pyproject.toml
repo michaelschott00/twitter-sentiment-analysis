@@ -20,12 +20,15 @@ dependencies = [
 
 [project.optional-dependencies]
 # GPU transformer training (RunPod) + scoring endpoint.
-# NOTE: torch itself is intentionally unpinned here. The RunPod base image
-# already ships a CUDA build of torch, and pip skips reinstalling when the
-# requirement is satisfied. For local CPU dev, install with:
+# torch is pinned here (single source of truth). The RunPod image is built on a
+# GPU-less-torch CUDA base (`runpod/base:...-cuda1281-...`), and PyPI's default
+# torch wheel is the matching cu128 build, so the whole stack is coherent.
+# torchvision/torchaudio are deliberately not installed: nothing in the
+# training path imports them, and transformers treats torchaudio as optional.
+# For local CPU dev, install with:
 #   pip install --break-system-packages --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,torch,lgbm,llm]"
 torch = [
-    "torch",
+    "torch==2.9.0",
     "lightning==2.6.6",
     "transformers==5.17.0",
     "torchmetrics==1.9.0",
