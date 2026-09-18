@@ -17,20 +17,27 @@ defaults:
   workspace: mlw-twitter-sentiment
 
 tools:
+
+  # GitHub
+
   - name: gh_pr
     description: GitHub CLI passthrough for pr subcommands.
-    creds: [GITHUB_TOKEN]
+    creds: [GH_TOKEN]
     base_argv: [gh, pr]
 
-  - name: gh_auth
-    description: GitHub CLI passthrough for auth subcommands.
-    creds: [GITHUB_TOKEN]
-    base_argv: [gh, auth]
+  - name: gh_workflow
+    description: GitHub CLI passthrough for workflow.
+    creds: [GH_TOKEN]
+    base_argv: [gh, workflow]
+
+  # Git
 
   - name: git_push
     description: Git push to GitHub remote.
-    creds: [GITHUB_TOKEN]
+    creds: [GH_TOKEN]
     base_argv: [git, push]
+
+  # Azure ML
 
   - name: azml_job_submit
     description: Submit any AML yaml job file (generic, not tied to infra/jobs).
@@ -62,12 +69,21 @@ tools:
         default_from: workspace
         default_flag: -w
 
-  - name: azcopy
-    description: AzCopy passthrough constrained to blob storage URLs.
-    creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
-    needs_az_login: true
-    base_argv: [azcopy]
+  # azcopy
+
+  - name: azcopy_copy
+    description: AzCopy copy passthrough constrained to blob storage URLs.
+    creds: [AZCOPY_AUTO_LOGIN_TYPE, AZCOPY_TENANT_ID, AZCOPY_SPA_APPLICATION_ID, AZCOPY_SPA_CLIENT_SECRET]
+    base_argv: [azcopy, copy]
     argv_allow_regex: "^(https://.*\\.blob\\.core\\.windows\\.net/.*|[^:]+)$"
+
+  - name: azcopy_list
+    description: AzCopy list passthrough constrained to blob storage URLs.
+    creds: [AZCOPY_AUTO_LOGIN_TYPE, AZCOPY_TENANT_ID, AZCOPY_SPA_APPLICATION_ID, AZCOPY_SPA_CLIENT_SECRET]
+    base_argv: [azcopy, list]
+    argv_allow_regex: "^(https://.*\\.blob\\.core\\.windows\\.net/.*|[^:]+)$"
+
+  # RunPod
 
   - name: runpodctl_pod_create
     description: Create a RunPod pod with passthrough options.
@@ -78,6 +94,21 @@ tools:
         docker_image: true
       - names: [--ports]
         ports: true
+
+  - name: runpodctl_pod_list
+    description: List running (and stopped with --all) pods that currently exist on RunPod.
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, pod, list]
+
+  - name: runpodctl_pod_logs
+    description: Read a pod's container and system logs.
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, pod, logs]
+
+  - name: runpodctl_pod_delete
+    description: Delete/terminate a pod by id.
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, pod, delete]
 
   - name: runpodctl_template_create
     description: -<
@@ -97,11 +128,6 @@ tools:
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, template, delete]
 
-  - name: runpodctl_gpu_list
-    description: List available gpu types and their availability on RunPod.
-    creds: [RUNPOD_API_KEY]
-    base_argv: [runpodctl, gpu, list]
-
   - name: runpodctl_template_list
     description: List RunPod templates (official, community, user).
     creds: [RUNPOD_API_KEY]
@@ -109,3 +135,8 @@ tools:
     params:
       - names: [--type]
         allow_regex: "^(official|community|user|all)$"
+
+  - name: runpodctl_gpu_list
+    description: List available gpu types and their availability on RunPod.
+    creds: [RUNPOD_API_KEY]
+    base_argv: [runpodctl, gpu, list]

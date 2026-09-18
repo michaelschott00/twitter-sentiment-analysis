@@ -125,7 +125,21 @@ def _error_result(e: BaseException) -> str:
     return f"returncode: 1\nerror: {redacted}"
 
 
-def _audit(tool: str, argv: list[str], rc: int, out_len: int, hits: int) -> None:
+def _creds_env(cfg: dict, env: dict[str, str]) -> dict[str, str]:
+    """Subset of env holding only the tool's `creds:` secrets (for audit)."""
+    creds = cfg.get("creds", []) or []
+    return {name: env[name] for name in creds if name in env}
+
+
+def _audit(
+    tool: str,
+    argv: list[str],
+    rc: int,
+    output: str,
+    hits: int,
+    secrets: dict[str, str] | None = None,
+) -> None:
+    """Append one JSONL record with the redacted output and creds secrets."""
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(AUDIT_LOG, "a") as f:
@@ -134,10 +148,12 @@ def _audit(tool: str, argv: list[str], rc: int, out_len: int, hits: int) -> None
                     {
                         "ts": time.time(),
                         "tool": tool,
-                        "argv0": argv[:2],
+                        "argv": argv,
                         "argc": len(argv),
                         "rc": rc,
-                        "bytes": out_len,
+                        "bytes": len(output),
+                        "output": output,
+                        "secrets": secrets or {},
                         "heuristic_hits": hits,
                     }
                 )
@@ -233,7 +249,7 @@ def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
             and not skip_az_login
             and (err := _ensure_az_login(env))
         ):
-            _audit(tool_name, argv, 1, len(err), 0)
+            _audit(tool_name, argv, 1, err, 0, _creds_env(cfg, env))
             return err
     except Exception as e:  # noqa: BLE001 - return errors as tool output
         return _error_result(e)
@@ -251,13 +267,13 @@ def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
             combined = combined[:MAX_OUTPUT] + "\n...[truncated]..."
         secrets = broker.secret_values()
         redacted, hits = redact(combined, secrets)
-        _audit(tool_name, argv, proc.returncode, len(combined), hits)
+        _audit(tool_name, argv, proc.returncode, redacted, hits, _creds_env(cfg, env))
         prefix = f"returncode: {proc.returncode}\n"
         return prefix + redacted
     except subprocess.TimeoutExpired as e:
         partial = (e.output or "") if isinstance(e.output, str) else ""
         redacted, hits = redact(partial, broker.secret_values())
-        _audit(tool_name, argv, 124, len(partial), hits)
+        _audit(tool_name, argv, 124, redacted, hits, _creds_env(cfg, env))
         return f"returncode: 124\ntimeout after {TIMEOUT_S}s\n{redacted}"
     except FileNotFoundError:
         return f"returncode: 127\nerror: executable not found: {argv[0]}"

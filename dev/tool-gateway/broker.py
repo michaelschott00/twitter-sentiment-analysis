@@ -12,8 +12,7 @@ import os
 # Secrets: exact env var names treated as credentials (redacted + scoped).
 # Non-secret config (subscription IDs, defaults) passes through separately.
 SECRET_NAMES = [
-    "GITHUB_TOKEN",
-    "GITHUB_PERSONAL_ACCESS_TOKEN",
+    "GH_TOKEN",
     "RUNPOD_API_KEY",
     "AZURE_CLIENT_ID",
     "AZURE_TENANT_ID",
@@ -31,10 +30,6 @@ class Broker:
             val = os.environ.get(name, "")
             if val:
                 self._secrets[name] = val
-        # Normalize aliases: PAT -> TOKEN so gh tools work either way.
-        pat = self._secrets.get("GITHUB_PERSONAL_ACCESS_TOKEN")
-        if pat and "GITHUB_TOKEN" not in self._secrets:
-            self._secrets["GITHUB_TOKEN"] = pat
 
     @property
     def secret_names(self) -> list[str]:
@@ -59,9 +54,6 @@ class Broker:
         for name in creds:
             if val := self._secrets.get(name):
                 env[name] = val
-                # gh CLI reads GH_TOKEN; azure CLI reads AZURE_* natively.
-                if name == "GITHUB_TOKEN":
-                    env.setdefault("GH_TOKEN", val)
         return env
 
     def secret_values(self) -> dict[str, str]:

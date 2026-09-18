@@ -39,25 +39,23 @@ def _set_broker_secrets(monkeypatch, **vals):
 def test_gh_env_excludes_azure_and_runpod(monkeypatch):
     _set_broker_secrets(
         monkeypatch,
-        GITHUB_TOKEN="gh-secret",
+        GH_TOKEN="gh-secret",
         AZURE_CLIENT_SECRET="az-secret",
         RUNPOD_API_KEY="rp-secret",
     )
     b = broker_mod.Broker()
-    env = b.clean_env(["GITHUB_TOKEN"])
-    assert env.get("GITHUB_TOKEN") == "gh-secret"
+    env = b.clean_env(["GH_TOKEN"])
+    assert env.get("GH_TOKEN") == "gh-secret"
     assert "AZURE_CLIENT_SECRET" not in env
     assert "RUNPOD_API_KEY" not in env
 
 
 def test_runpod_env_excludes_github(monkeypatch):
-    _set_broker_secrets(
-        monkeypatch, GITHUB_TOKEN="gh-secret", RUNPOD_API_KEY="rp-secret"
-    )
+    _set_broker_secrets(monkeypatch, GH_TOKEN="gh-secret", RUNPOD_API_KEY="rp-secret")
     b = broker_mod.Broker()
     env = b.clean_env(["RUNPOD_API_KEY"])
     assert env["RUNPOD_API_KEY"] == "rp-secret"
-    assert "GITHUB_TOKEN" not in env
+    assert "GH_TOKEN" not in env
 
 
 # --- redaction ---------------------------------------------------------------
@@ -240,7 +238,7 @@ def test_az_login_runs_on_cold_cache(monkeypatch, tmp_ws):
 
 
 def test_az_login_only_for_azure_tools(monkeypatch):
-    _set_broker_secrets(monkeypatch, GITHUB_TOKEN="gh-secret")
+    _set_broker_secrets(monkeypatch, GH_TOKEN="gh-secret")
     monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
     with patch.object(server_mod.subprocess, "run") as m:
         m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
@@ -404,7 +402,7 @@ def test_template_ports_rejects_path():
 
 def test_azcopy_rejects_non_blob_url():
     out = server_mod.call_tool(
-        "azcopy",
+        "azcopy_copy",
         argv=["azcopy", "copy", "https://evil.example/x", "https://evil.example/y"],
     )
     assert "not allowed" in out
@@ -419,12 +417,9 @@ def test_azcopy_allows_blob_url(monkeypatch):
     )
     monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
     with patch.object(server_mod.subprocess, "run") as m:
-        m.side_effect = [
-            MagicMock(returncode=0, stdout="", stderr=""),  # account show
-            MagicMock(returncode=0, stdout="ok", stderr=""),  # main cmd
-        ]
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         out = server_mod.call_tool(
-            "azcopy",
+            "azcopy_copy",
             argv=[
                 "azcopy",
                 "copy",
@@ -435,12 +430,31 @@ def test_azcopy_allows_blob_url(monkeypatch):
     assert "returncode: 0" in out
 
 
+def test_azcopy_list_rejects_non_blob_url():
+    out = server_mod.call_tool(
+        "azcopy_list",
+        argv=["azcopy", "list", "https://evil.example/x"],
+    )
+    assert "not allowed" in out
+
+
+def test_azcopy_list_allows_blob_url(monkeypatch):
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        out = server_mod.call_tool(
+            "azcopy_list",
+            argv=["azcopy", "list", "https://acct.blob.core.windows.net/c/x"],
+        )
+    assert "returncode: 0" in out
+
+
 def test_canary_never_leaks(monkeypatch, tmp_ws):
     canary = "canary-9f8e7d6c5b4a"
-    _set_broker_secrets(monkeypatch, GITHUB_TOKEN=canary)
+    _set_broker_secrets(monkeypatch, GH_TOKEN=canary)
     monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
     with patch.object(server_mod.subprocess, "run") as m:
         m.return_value = MagicMock(returncode=0, stdout=f"token={canary}", stderr="")
         out = server_mod.call_tool("gh_pr", argv=["gh", "pr", "list"])
     assert canary not in out
-    assert "GITHUB_TOKEN" in out
+    assert "GH_TOKEN" in out

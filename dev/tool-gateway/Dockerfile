@@ -22,8 +22,7 @@ RUN apt-get update \
 
 # Azure CLI (pinned) + ML extension.
 RUN --mount=type=cache,id=pip-gw,target=/home/agent/.cache/pip,sharing=locked \
-    pip install --break-system-packages azure-cli==${AZURE_CLI_VERSION} "mcp[cli]==2.2.0" pyyaml==6.0.3 \
-    && az extension add --name ml --version ${ML_EXTENSION_VERSION} --yes
+    pip install --break-system-packages azure-cli==${AZURE_CLI_VERSION} "mcp[cli]==2.2.0" pyyaml==6.0.3
 
 # gh CLI (pinned .deb).
 RUN curl -fsSL -o /tmp/gh.deb \
@@ -52,6 +51,9 @@ RUN curl -fsSL -o /usr/local/bin/runpodctl \
 
 RUN useradd -m -u 1000 agent && mkdir -p /home/agent/.cache/pip && chown -R agent:agent /home/agent /workspace
 USER agent
+
+# Install the Azure ML extension (as the runtime user, so `az ml` is found)
+RUN az extension add --name ml --version ${ML_EXTENSION_VERSION} --yes
 
 # Use bind mounts for now so this container has access to the repo
 # COPY dev/tool-gateway/server.py dev/tool-gateway/broker.py dev/tool-gateway/redact.py ./
