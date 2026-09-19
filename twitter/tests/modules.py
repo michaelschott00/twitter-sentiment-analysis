@@ -24,6 +24,7 @@ import gc
 import os
 import tempfile
 import unittest
+from collections import UserDict
 
 import lightning.pytorch as pl
 import torch
@@ -70,6 +71,15 @@ def clf_batch(batch=BATCH, seq=SEQ_LEN, n_classes=3):
         "attention_mask": torch.ones(batch, seq, dtype=torch.long),
         "labels": torch.randint(0, n_classes, (batch,)),
     }
+
+
+def mapping_clf_batch(batch=BATCH, seq=SEQ_LEN, n_classes=3):
+    """``clf_batch`` wrapped in a Mapping-but-not-dict.
+
+    The production collate returns a transformers ``BatchEncoding`` (a
+    ``UserDict``), not a plain dict; ``log_batch`` must still log it.
+    """
+    return UserDict(clf_batch(batch, seq, n_classes))
 
 
 def reg_batch(batch=BATCH, seq=SEQ_LEN):
@@ -646,7 +656,7 @@ class MLflowLoggerTests(unittest.TestCase):
     guard for the RunPod/Azure MLflow path.
     """
 
-    def _fit(self, uri):
+    def _fit(self, uri, batch_fn=clf_batch):
         from lightning.pytorch.loggers import MLFlowLogger
 
         logger = MLFlowLogger(
@@ -663,7 +673,7 @@ class MLflowLoggerTests(unittest.TestCase):
             num_sanity_val_steps=0,
             log_every_n_steps=1,
         )
-        trainer.fit(module, _DummyDataModule(n_batches=2))
+        trainer.fit(module, _DummyDataModule(batch_fn=batch_fn, n_batches=2))
         return logger
 
     def test_artifacts_attach_to_lightning_run(self):
@@ -674,6 +684,18 @@ class MLflowLoggerTests(unittest.TestCase):
             self.assertIn("loss/validation", run.data.metrics)
             artifacts = {a.path for a in client.list_artifacts(logger.run_id)}
             self.assertIn("Confusion Matrix_validation.png", artifacts)
+            self.assertIn("Input_training", artifacts)
+            self.assertIn("Input_validation", artifacts)
+
+    def test_input_samples_logged_for_mapping_batches(self):
+        """The real collate yields BatchEncoding (Mapping, not dict)."""
+        with tempfile.TemporaryDirectory() as d:
+            logger = self._fit(
+                "file:" + os.path.join(d, "mlruns"), batch_fn=mapping_clf_batch
+            )
+            artifacts = {
+                a.path for a in logger.experiment.list_artifacts(logger.run_id)
+            }
             self.assertIn("Input_training", artifacts)
             self.assertIn("Input_validation", artifacts)
 

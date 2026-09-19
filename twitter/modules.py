@@ -1,6 +1,7 @@
 import math
 import os
 import tempfile
+from collections.abc import Mapping
 from typing import Literal
 
 import lightning.pytorch as pl
@@ -210,11 +211,14 @@ class _BaseModule(pl.LightningModule):
             tokenizer = self.model.tokenizer
         else:
             return
-        # batch is dict with input_ids
-        if isinstance(batch, dict) and "input_ids" in batch:
+        # batch is dict with input_ids. Use Mapping, not dict: the production
+        # collate returns a transformers BatchEncoding, which is a Mapping but
+        # not a dict subclass (so a plain `isinstance(batch, dict)` skips it).
+        if isinstance(batch, Mapping) and "input_ids" in batch:
             ids = batch["input_ids"]
         elif isinstance(batch, (list, tuple)) and len(batch) > 0:
-            ids = batch[0].get("input_ids", []) if isinstance(batch[0], dict) else []
+            first = batch[0]
+            ids = first.get("input_ids", []) if isinstance(first, Mapping) else []
         else:
             return
         for i in range(min(len(ids), n)):
