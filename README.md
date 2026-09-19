@@ -69,7 +69,7 @@ pip install -e ".[llm]"
 Hyperparameters are specified in the configuration files under the [configs directory](configs). Fine-tuning is initiated by running [main.py](twitter/main.py) with the task and encoder configurations. For example, training a Sentence-BERT model for classification is performed from the repository root as follows:
 
 ```bash
-python -m twitter.main \
+python -m twitter.main fit \
     --config configs/tasks/classification.yaml \
     --config configs/encoders/sentence_bert_base.yaml
 ```
