@@ -41,7 +41,12 @@ def run(raw_data):
     texts = data["text"] if isinstance(data["text"], list) else [data["text"]]
     inputs = tokenizer(texts, return_tensors="pt", truncation=True, padding=True)
     with torch.no_grad():
-        logits = model(inputs["input_ids"], inputs["attention_mask"])
+        logits = model(
+            {
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"],
+            }
+        )
         preds = logits.argmax(dim=-1).tolist()
     results = [{"prediction": int(p), "label": LABELS[int(p)]} for p in preds]
     return results[0] if not isinstance(data["text"], list) else results

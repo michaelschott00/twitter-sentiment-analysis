@@ -708,6 +708,162 @@ class MLflowLoggerTests(unittest.TestCase):
                 self.assertEqual(client.search_runs([default.experiment_id]), [])
 
 
+class MLflowTrackingUriTests(unittest.TestCase):
+    """Guards the RunPod -> Azure ML tracking path configuration.
+
+    Lightning's ``MLFlowLogger`` defaults ``tracking_uri`` to
+    ``os.getenv("MLFLOW_TRACKING_URI")``, but *only* when the key is omitted.
+    Passing ``tracking_uri: null`` (the previous ``configs/defaults.yaml``)
+    makes Lightning fall back to ``file:./mlruns`` and silently discards the
+    pod's ``MLFLOW_TRACKING_URI`` -- the bug that made runs invisible in the
+    Azure ML workspace. These tests pin the omission behavior the config now
+    relies on.
+    """
+
+    def _logger_from_defaults_yaml(self, tracking_uri_value):
+        """Build the logger init_args exactly as ``configs/defaults.yaml`` does."""
+        import yaml
+
+        with open("configs/defaults.yaml") as fh:
+            cfg = yaml.safe_load(fh)
+        init_args = dict(cfg["trainer"]["logger"]["init_args"])
+        if tracking_uri_value is not None:
+            init_args["tracking_uri"] = tracking_uri_value
+        return init_args
+
+    def test_defaults_yaml_omits_tracking_uri(self):
+        init_args = self._logger_from_defaults_yaml(tracking_uri_value=None)
+        self.assertNotIn(
+            "tracking_uri",
+            init_args,
+            "configs/defaults.yaml must omit tracking_uri so Lightning's "
+            "os.getenv('MLFLOW_TRACKING_URI') default applies",
+        )
+
+    def test_omitted_tracking_uri_uses_env_var(self):
+        # Lightning reads os.getenv("MLFLOW_TRACKING_URI") as the *parameter
+        # default*, evaluated at import. The pod sets the env var before the
+        # process starts, so a subprocess is the faithful reproduction (setting
+        # os.environ inside an already-imported test process would not be).
+        import subprocess
+        import sys
+
+        uri = (
+            "azureml://westeurope.api.azureml.ms/mlflow/v1.0/"
+            "subscriptions/00000000-0000-0000-0000-000000000000"
+            "/resourceGroups/rg-twitter-ml/providers/"
+            "Microsoft.MachineLearningServices/workspaces/mlw-twitter-sentiment"
+        )
+        code = (
+            "from lightning.pytorch.loggers import MLFlowLogger;"
+            "import inspect;"
+            "print(MLFlowLogger.__init__.__defaults__[2])"
+        )
+        env = dict(os.environ)
+        env["MLFLOW_TRACKING_URI"] = uri
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), uri)
+
+    def test_explicit_null_tracking_uri_falls_back_to_local(self):
+        """Documents why the config must not set the key (regression guard)."""
+        from lightning.pytorch.loggers import MLFlowLogger
+
+        uri = "azureml://westeurope.api.azureml.ms/mlflow/v1.0/sub/ws"
+        old = os.environ.get("MLFLOW_TRACKING_URI")
+        os.environ["MLFLOW_TRACKING_URI"] = uri
+        try:
+            init_args = self._logger_from_defaults_yaml(tracking_uri_value=None)
+            init_args["tracking_uri"] = None
+            logger = MLFlowLogger(**init_args)
+            self.assertEqual(logger._tracking_uri, "file:./mlruns")
+        finally:
+            if old is None:
+                os.environ.pop("MLFLOW_TRACKING_URI", None)
+            else:
+                os.environ["MLFLOW_TRACKING_URI"] = old
+
+
+class ModelRegistrationTests(unittest.TestCase):
+    """``on_train_end`` must register the best checkpoint in the MLflow registry."""
+
+    def test_registered_model_name_derived_from_task_and_encoder(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        self.assertEqual(
+            module._registered_model_name(), "twitter-clf-tiny-random-bert"
+        )
+
+    def test_registered_model_name_for_module_without_task_hparam(self):
+        # SupervisedContrastiveLearningModule has no `task` hparam; it is
+        # classification-only, so the name must still resolve.
+        module = modules.SupervisedConstrastiveLearningModule(
+            encoder=make_encoder(), scheduler=None
+        )
+        self.assertEqual(
+            module._registered_model_name(), "twitter-clf-tiny-random-bert"
+        )
+
+    def test_registers_best_checkpoint_into_registry(self):
+        import mlflow
+        from lightning.pytorch.callbacks import ModelCheckpoint
+        from lightning.pytorch.loggers import MLFlowLogger
+
+        with tempfile.TemporaryDirectory() as d:
+            tracking = "file:" + os.path.join(d, "mlruns")
+            logger = MLFlowLogger(experiment_name="twitter-test", tracking_uri=tracking)
+            ckpt = ModelCheckpoint(dirpath=os.path.join(d, "ckpts"), save_top_k=1)
+            trainer = _cpu_trainer(
+                logger=logger,
+                callbacks=[ckpt],
+                enable_checkpointing=True,
+                max_epochs=1,
+                limit_train_batches=1,
+                limit_val_batches=1,
+                num_sanity_val_steps=0,
+                log_every_n_steps=1,
+            )
+            module = modules.SingleTaskModule(
+                encoder=make_encoder(), task="clf", scheduler=None
+            )
+            trainer.fit(module, _DummyDataModule(batch_fn=clf_batch, n_batches=2))
+
+            self.assertTrue(ckpt.best_model_path)
+            self.assertTrue(os.path.exists(ckpt.best_model_path))
+
+            # on_train_end runs automatically at the end of fit(); registration
+            # targets the task+encoder-derived name.
+            name = "twitter-clf-tiny-random-bert"
+            self.assertEqual(module._registered_model_name(), name)
+            client = mlflow.MlflowClient(tracking_uri=tracking)
+            versions = client.search_model_versions(f"name='{name}'")
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].run_id, logger.run_id)
+
+            # The registered model must be loadable and usable as a pyfunc.
+            from twitter.mlflow_model import LABELS
+
+            mlflow.set_tracking_uri(tracking)
+            loaded = mlflow.pyfunc.load_model(f"runs:/{logger.run_id}/registered_model")
+            preds = loaded.predict(["this is great", "this is terrible"])
+            self.assertEqual(len(preds), 2)
+            self.assertTrue(set(preds).issubset(set(LABELS)))
+
+    def test_registration_skipped_without_mlflow_logger(self):
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        module._trainer = None
+        module.on_train_end()  # must not raise
+
+
 @unittest.skipUnless(
     os.environ.get("TWITTER_TEST_REAL_ENCODERS") == "1",
     "set TWITTER_TEST_REAL_ENCODERS=1 to load the multi-GB production "

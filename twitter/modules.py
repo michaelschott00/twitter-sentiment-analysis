@@ -176,6 +176,60 @@ class _BaseModule(pl.LightningModule):
         else:
             self.logger.experiment.add_figure(tag, fig)
 
+    def _encoder_name(self):
+        encoder = getattr(self, "encoder", None)
+        config = getattr(encoder, "config", None)
+        return getattr(config, "_name_or_path", None)
+
+    def _registered_model_name(self):
+        """Registry name for this run's model, e.g. ``twitter-clf-bertweet-large``.
+
+        The encoder id is reduced to its final path component so the name stays
+        stable and readable (``vinai/bertweet-large`` -> ``bertweet-large``).
+        Modules without an explicit ``task`` hparam (e.g. contrastive learning)
+        are classification-only, hence the ``clf`` fallback.
+        """
+        task = getattr(self.hparams, "task", None) or "clf"
+        encoder_name = self._encoder_name() or "unknown-encoder"
+        short = encoder_name.rstrip("/").split("/")[-1]
+        return f"twitter-{task}-{short}"
+
+    def on_train_end(self):
+        """Register the best checkpoint in the MLflow/Azure ML model registry.
+
+        Only runs when an MLflow logger is active and a ``ModelCheckpoint``
+        callback produced a checkpoint. Registration is best-effort: a registry
+        failure must not fail an otherwise successful training run, so errors
+        are logged as a warning.
+        """
+        if not self._is_mlflow_logger():
+            return
+        checkpoint_cb = None
+        for cb in getattr(self.trainer, "callbacks", []):
+            if type(cb).__name__ == "ModelCheckpoint":
+                checkpoint_cb = cb
+                break
+        best_path = (
+            getattr(checkpoint_cb, "best_model_path", "") if checkpoint_cb else ""
+        )
+        if not best_path:
+            return
+
+        from twitter.mlflow_model import log_and_register
+
+        name = self._registered_model_name()
+        try:
+            version = log_and_register(
+                logger=self.logger,
+                checkpoint_path=best_path,
+                encoder_name=self._encoder_name(),
+                registered_model_name=name,
+                module_class=f"{type(self).__module__}.{type(self).__name__}",
+            )
+            print(f"Registered model {name} version {version.version}")
+        except Exception as e:  # noqa: BLE001
+            print(f"Model registration failed (run still logged): {e}")
+
     def on_train_batch_start(self, batch, batch_idx):
         # Log some texts from the first input batch
         if self.current_epoch == 0 and batch_idx == 0:

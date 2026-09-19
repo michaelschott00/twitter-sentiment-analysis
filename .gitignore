@@ -6,6 +6,7 @@ data/
 # AML data-asset definitions live under infra/data/ — keep them committed.
 !infra/data/
 lightning_logs/
+mlruns/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

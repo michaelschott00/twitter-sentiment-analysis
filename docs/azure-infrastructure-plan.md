@@ -63,7 +63,7 @@ flowchart TB
             EP["Managed Online Endpoint\ntw-sentiment\n(deployment: blue, 0-1 inst)"]
         end
 
-        MLFLOW["MLflow Tracking\n(Workspace-managed)\nMLFLOW_TRACKING_URI=https://<ws>.ml.azure.com"]
+        MLFLOW["MLflow Tracking\n(Workspace-managed)\nMLFLOW_TRACKING_URI=azureml://<region>.api.azureml.ms/mlflow/v1.0/<ws-id>"]
     end
 
     subgraph RunPod["RunPod (external GPU)"]
@@ -354,12 +354,20 @@ Implementation:
        class_path: lightning.pytorch.loggers.MLFlowLogger
        init_args:
          experiment_name: twitter-sentiment
-         tracking_uri: ${MLFLOW_TRACKING_URI}
+         # tracking_uri deliberately omitted: Lightning defaults it to
+         # os.getenv("MLFLOW_TRACKING_URI") at import (azureml://... on the
+         # RunPod pod / AML job; unset locally -> file:./mlruns).
+         # Do NOT pass `tracking_uri: null` — Lightning treats any falsy value
+         # as "no URI" and silently falls back to file:./mlruns, discarding
+         # the pod's MLFLOW_TRACKING_URI. Do NOT use ${MLFLOW_TRACKING_URI}
+         # either: parser_mode=omegaconf parses that as an interpolation.
          tags: {model: sbert, task: clf}
-         log_model: true   # stores MLflow pyfunc + checkpoints
+         log_model: true   # uploads the .ckpt as a run artifact
    ```
 
-   Add `MLFlowLogger` to all `configs/tasks/*.yaml` or default. Autolog can be added in `twitter/modules.py` (`mlflow.pytorch.autolog()` optional).
+   `MLFlowLogger` is in `configs/defaults.yaml`, so it applies to all tasks.
+   `twitter/modules.py` additionally registers the best checkpoint in the
+   MLflow model registry at end of training (see item 5).
 
 3. **Code change (minimal):** In `twitter/modules.py`, allow `self.logger` to be `MLFlowLogger` (already duck-typed). Remove TensorBoard-only branches — keep `add_text/figure` but gate on logger type (MLflow logs via `logger.experiment.log_text` or `mlflow.log_figure`). Simpler: log confusion matrix as `mlflow.log_figure(fig, "confusion_matrix.png")`.
 
@@ -367,7 +375,7 @@ Implementation:
    - Locally `az login` then `mlflow` uses `DefaultAzureCredential`. In AML CPU job, `MLFLOW_TRACKING_URI` + managed identity auto-auth (no secret).
    - On RunPod (external GPU), auth uses the `runpod-mlflow-sp` service principal (§10): `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` + `MLFLOW_TRACKING_URI`. `DefaultAzureCredential` (env-var path) picks it up automatically, so `mlflow` SDK and `azure-ai-ml` SDK need no code change. Secret lives in Key Vault; injected into the pod as env vars and never committed.
 
-5. **Artifacts:** Checkpoints (`ModelCheckpoint` callback) + `lightning_logs/` → MLflow artifact store (backed by `st…/azureml` container). Register model via `mlflow.register_model()`.
+5. **Artifacts:** Checkpoints (`ModelCheckpoint` callback) + `lightning_logs/` → MLflow artifact store (backed by `st…/azureml` container). At the end of training, `_BaseModule.on_train_end` packages the best checkpoint as an `mlflow.pyfunc` model (`twitter/mlflow_model.py`) and registers it (e.g. `twitter-clf-bertweet-large`) in the workspace model registry; the registered version bundles the `.ckpt` the endpoint's `score.py` loads.
 
 ### 6.2 Terraform output needed
 
@@ -470,34 +478,33 @@ ml_client.jobs.stream(job.name)
 Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod but remains fully tracked in the Azure ML workspace / MLflow.
 
 1. **Prereqs (Terraform, §10):** `runpod-mlflow-sp` service principal exists with `AzureML Data Scientist` on the workspace + `Storage Blob Data Contributor` on the storage account. Secret stored in Key Vault.
-2. **Start pod:** GPU pod (e.g. RTX A4000/4090) with PyTorch CUDA image; sync repo (`git clone` / `runpod` volume) and `pip install -e ".[torch]"`.
-3. **Inject creds (env vars, never committed):**
+2. **Start pod:** GPU pod from the `twitter-sentiment-gpu` RunPod template (image `michaelschott00/twitter-sentiment:dev`, built from `infra/environments/runpod/Dockerfile`). The template injects all credentials as env vars from RunPod secrets, so no manual export is needed:
+
+   | Env var                 | RunPod secret                     | Value                              |
+   | ----------------------- | --------------------------------- | ---------------------------------- |
+   | `AZURE_CLIENT_ID`       | `RUNPOD_SECRET_AZURE_CLIENT_ID`    | `runpod-mlflow-sp` client id        |
+   | `AZURE_CLIENT_SECRET`   | `RUNPOD_SECRET_AZURE_CLIENT_SECRET`| Key Vault `runpod-mlflow-sp-secret` |
+   | `AZURE_TENANT_ID`       | `RUNPOD_SECRET_AZURE_TENANT_ID`    | tenant id                          |
+   | `AZURE_SUBSCRIPTION_ID` | `RUNPOD_SECRET_AZURE_SUBSCRIPTION_ID` | subscription id                 |
+   | `MLFLOW_TRACKING_URI`   | `RUNPOD_SECRET_MLFLOW_TRACKING_URI`| `terraform output mlflow_tracking_uri` |
+   | `AZURE_RESOURCE_GROUP`  | (template literal)                 | `rg-twitter-ml`                     |
+   | `AZUREML_WORKSPACE`     | (template literal)                 | `mlw-twitter-sentiment`             |
+
+   `MLFLOW_TRACKING_URI` = `azureml://westeurope.api.azureml.ms/mlflow/v1.0/<workspace-id>`; `DefaultAzureCredential` picks up the SP automatically, so no code change is needed in `twitter/` or the MLflow setup.
+3. **Fetch data:** download `twitter-splits` via the AML SDK / `azcopy` authenticated as the SP (same `Storage Blob Data Contributor` role), or `mlflow` artifact download. Keep the same `data.init_args.root_dir=<local pod path>` override pattern as §5.2.
+4. **Run training — identical command, identical MLflow logger:**
 
    ```bash
-   export AZURE_CLIENT_ID="<sp-client-id>"
-   export AZURE_CLIENT_SECRET="<from-key-vault>"
-   export AZURE_TENANT_ID="<tenant-id>"
-   export AZURE_SUBSCRIPTION_ID="<sub-id>"
-   export MLFLOW_TRACKING_URI="azureml://westeurope.api.azureml.ms/mlflow/v1.0/<workspace-id>"  # = terraform output mlflow_tracking_uri
-   ```
-
-   `DefaultAzureCredential` picks up the SP automatically — no code change in `twitter/` or MLflow setup.
-4. **Fetch data:** download `twitter-splits` via the AML SDK / `azcopy` authenticated as the SP (same `Storage Blob Data Contributor` role), or `mlflow` artifact download. Keep the same `data.init_args.root_dir=<local pod path>` override pattern as §5.2.
-5. **Run training — identical command, identical MLflow logger:**
-
-   ```bash
-   python -m twitter.main \
+   python -m twitter.main fit \
      --config configs/tasks/classification.yaml \
      --config configs/encoders/bertweet_large.yaml \
      data.init_args.root_dir=./data/splits \
-     trainer.logger.class_path=lightning.pytorch.loggers.MLFlowLogger \
-     trainer.logger.init_args.experiment_name=twitter-clf \
-     trainer.logger.init_args.tracking_uri=${MLFLOW_TRACKING_URI} \
      trainer.max_epochs=10
    ```
 
-   Params/metrics/artifacts land in the Azure-managed MLflow; register with `mlflow.register_model("runs:/<run_id>/model", "twitter-bert-clf")` as usual.
-6. **Stop pod** immediately after the run uploads artifacts — RunPod bills per second while running.
+   Params/metrics/artifacts land in the Azure-managed MLflow. The run's best checkpoint is registered as `twitter-clf-bertweet-large` (task + encoder derived); register a different name manually with `mlflow.register_model("runs:/<run_id>/registered_model", "name")` if needed.
+5. **`run.sh` verifies MLflow up front:** for real runs (`AUTO_STOP=1`) the container refuses to start training unless `MLFLOW_TRACKING_URI` is set and reachable (and, for `azureml://`, the three `AZURE_*` SP vars are present), exiting non-zero otherwise. This prevents the silent `file:./mlruns` fallback that made runs invisible in the workspace. Set `SKIP_MLFLOW_CHECK=1` to bypass, `SKIP_DATA_DOWNLOAD=1` to skip the splits download.
+6. **Stop pod** immediately after the run uploads artifacts — RunPod bills per second while running. `run.sh` self-stops when `AUTO_STOP=1`.
 
 ---
 
@@ -513,7 +520,7 @@ Artifacts to log per run:
 - Metrics CSV + confusion matrix PNG + `lightning_logs/` summary
 - `requirements.txt` hash for reproducibility
 
-Naming: `twitter-{encoder}-{task}:{version}` e.g., `twitter-bertweet-large-clf:1`, tags `macro_f1=0.79`, `rmse=0.21`, `encoder=vinai/bertweet-large`.
+Naming: `twitter-{task}-{encoder}:{version}` e.g., `twitter-clf-bertweet-large:1`, tags `macro_f1=0.79`, `rmse=0.21`, `encoder=vinai/bertweet-large`. The name is derived automatically at end of training (`_BaseModule.on_train_end` → `twitter/mlflow_model.py`), which bundles the best `.ckpt` as an `mlflow.pyfunc` model under the run's `registered_model` artifact and registers that version.
 
 ---
 

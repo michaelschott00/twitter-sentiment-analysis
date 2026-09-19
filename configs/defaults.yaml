@@ -14,11 +14,14 @@ trainer:
     class_path: lightning.pytorch.loggers.MLFlowLogger
     init_args:
       experiment_name: twitter-sentiment
-      # tracking_uri is intentionally null so the MLflow SDK picks up the
-      # MLFLOW_TRACKING_URI environment variable (local mlruns/ or
-      # azureml://... on AML). Do NOT template ${...} here: with
-      # parser_mode=omegaconf that would be parsed as a config interpolation.
-      tracking_uri: null
+      # tracking_uri is intentionally omitted. Lightning's MLFlowLogger
+      # defaults it to os.getenv("MLFLOW_TRACKING_URI") (azureml://... on the
+      # RunPod pod / AML job, unset locally -> file:./mlruns). Passing
+      # tracking_uri: null explicitly would defeat that default: Lightning
+      # treats any falsy value as "no URI" and falls back to file:./mlruns,
+      # silently discarding the pod's MLFLOW_TRACKING_URI. Do NOT template
+      # ${...} here either: with parser_mode=omegaconf that would be parsed
+      # as a config interpolation.
       tags: { model: sbert, task: clf }
       log_model: true
   callbacks: null

@@ -140,6 +140,42 @@ if [ "$AUTO_STOP" -eq 1 ]; then
       fi
       ;;
   esac
+
+  # Fail fast if MLflow cannot reach the configured tracking backend. Without
+  # this, lightning's MLFlowLogger silently falls back to a local file store
+  # (file:./mlruns) and the pod is stopped before anyone notices the run never
+  # reached Azure. Only real runs (AUTO_STOP=1) are checked; `--help`/debug
+  # shells may legitimately run without MLflow.
+  case "${SKIP_MLFLOW_CHECK:-0}" in
+    1|true|True|TRUE|yes|Yes|YES)
+      echo "run.sh: skipping MLflow reachability check (SKIP_MLFLOW_CHECK set)" >&2
+      ;;
+    *)
+      : "${MLFLOW_TRACKING_URI:?run.sh: set MLFLOW_TRACKING_URI (azureml://<region>.api.azureml.ms/mlflow/v1.0/<workspace-id>)}"
+      if [ "${MLFLOW_TRACKING_URI#azureml://}" != "$MLFLOW_TRACKING_URI" ]; then
+        : "${AZURE_TENANT_ID:?run.sh: set AZURE_TENANT_ID for azureml:// MLflow}"
+        : "${AZURE_CLIENT_ID:?run.sh: set AZURE_CLIENT_ID for azureml:// MLflow}"
+        : "${AZURE_CLIENT_SECRET:?run.sh: set AZURE_CLIENT_SECRET for azureml:// MLflow}"
+      fi
+      if ! python - <<'PY'
+import os
+import sys
+
+import mlflow
+
+uri = os.environ["MLFLOW_TRACKING_URI"]
+name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "twitter-sentiment")
+mlflow.set_tracking_uri(uri)
+experiment = mlflow.set_experiment(name)
+print(f"run.sh: MLflow ok ({uri}, experiment={experiment.name})", file=sys.stderr)
+PY
+      then
+        echo "run.sh: MLflow reachability check failed for MLFLOW_TRACKING_URI='$MLFLOW_TRACKING_URI'." >&2
+        echo "run.sh: refusing to train into a local ./mlruns fallback; fix credentials/URI or set SKIP_MLFLOW_CHECK=1." >&2
+        exit 1
+      fi
+      ;;
+  esac
 fi
 "$@"
 EXIT_CODE=$?

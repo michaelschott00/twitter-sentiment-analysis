@@ -76,10 +76,12 @@ python -m twitter.main fit \
 
 ### Evaluation
 
-During training, optimization and validation metrics — together with diagnostic artifacts such as high-confidence errors and confusion matrices — are logged to `tensorboard` and can be inspected via:
+During training, optimization and validation metrics — together with diagnostic artifacts such as high-confidence errors and confusion matrices — are logged via MLflow (see `configs/defaults.yaml`). The tracking backend is taken from `MLFLOW_TRACKING_URI`: an `azureml://...` workspace URI on the RunPod pod/Azure ML job, and a local `./mlruns` store when unset. At the end of each run the best checkpoint is registered in the MLflow model registry as `twitter-{task}-{encoder}` (e.g. `twitter-clf-bertweet-large`).
+
+To inspect local runs, start the MLflow UI:
 
 ```bash
-tensorboard --logdir lightning_logs
+mlflow ui --backend-store-uri ./mlruns
 ```
 
 ## Annotation Interface
