@@ -9,6 +9,9 @@ services:
       - ~/.config/opencode:/home/agent/.config/opencode
       - ~/.local/share/opencode:/home/agent/.local/share/opencode
       - ~/.local/state/opencode:/home/agent/.local/state/opencode
+      - ~/.cache/torch/:/home/agent/.cache/torch/
+      - ~/.cache/huggingface/:/home/agent/.cache/huggingface/
+      - worktrees:/home/agent/worktrees
     environment:
       - GIT_AUTHOR_NAME=agent
       - GIT_AUTHOR_EMAIL=agent@example.com
@@ -32,3 +35,6 @@ services:
       - ../.azure.env
     environment:
       - PORT=8004
+
+volumes:
+  worktrees:

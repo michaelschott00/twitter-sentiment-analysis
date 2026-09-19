@@ -144,6 +144,9 @@ RUN printf '%s\n' \
       > /usr/local/bin/drawio \
     && chmod 755 /usr/local/bin/drawio
 
+RUN mkdir -p /home/agent/.cache \
+    && mkdir -p /home/agent/worktrees
+
 # Create unprivileged agent user. Own both venvs so the runtime user can
 # `pip install` into the project env and `az extension add` can write caches.
 RUN useradd -m -u 1000 agent
