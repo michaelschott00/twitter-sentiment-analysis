@@ -1,4 +1,6 @@
 import math
+import os
+import tempfile
 from typing import Literal
 
 import lightning.pytorch as pl
@@ -143,11 +145,18 @@ class _BaseModule(pl.LightningModule):
         ):
             return
         if self._is_mlflow_logger():
-            # MLFlowLogger has no add_text; log via the mlflow SDK against the
-            # run that Lightning's MLFlowLogger keeps active during fit.
-            import mlflow
-
-            mlflow.log_text(text, f"{tag.replace('/', '_')}/{step}.txt")
+            # Lightning's MLFlowLogger talks to MLflow through a client bound
+            # to its own run id and never registers a global active run. The
+            # fluent `mlflow.log_*` helpers would therefore start an orphan run
+            # in the default experiment, leaving the real run without these
+            # artifacts. Log through the logger's client instead.
+            with tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, f"{step}.txt")
+                with open(path, "w") as fh:
+                    fh.write(text)
+                self.logger.experiment.log_artifact(
+                    self.logger.run_id, path, tag.replace("/", "_")
+                )
         else:
             self.logger.experiment.add_text(tag, text, step)
 
@@ -159,9 +168,10 @@ class _BaseModule(pl.LightningModule):
         ):
             return
         if self._is_mlflow_logger():
-            import mlflow
-
-            mlflow.log_figure(fig, f"{tag.replace('/', '_')}.png")
+            with tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, f"{tag.replace('/', '_')}.png")
+                fig.savefig(path)
+                self.logger.experiment.log_artifact(self.logger.run_id, path)
         else:
             self.logger.experiment.add_figure(tag, fig)
 

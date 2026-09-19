@@ -1,13 +1,26 @@
 """CPU-only smoke + unit tests for twitter.modules.
 
 Goal: catch bugs locally before submitting full training runs to RunPod.
-Uses the tiny ``hf-internal-testing/tiny-random-bert`` backbone (5 layers,
-hidden size 32) and synthetic batches, so the whole file runs in ~1 min
-on a CPU-only machine with no real dataset needed.
+Uses tiny random checkpoints (hidden size 32) and synthetic batches, so the
+whole file runs in a couple of minutes on a CPU-only machine with no real
+dataset needed.
+
+The bulk of the tests run against ``hf-internal-testing/tiny-random-bert``.
+Because the production encoder configs also target RoBERTa (BERTweet),
+DeBERTa-v2 (DeBERTa-v3) and ModernBERT -- which expose their transformer
+layers differently -- ``ARCH_TINY`` covers each of those architecture families
+with a tiny checkpoint too, so the architecture-specific paths (layer
+discovery, pooling, freeze/reset) are exercised without downloading the
+multi-GB real checkpoints.
 
 Run with: ``pytest twitter/tests/modules.py -v``
+
+The real production checkpoints (multi-GB, ~8 GB RAM for one training step on
+CPU) are checked by ``RealEncoderIntegrationTests``, which is skipped unless
+``TWITTER_TEST_REAL_ENCODERS=1`` is set.
 """
 
+import gc
 import os
 import tempfile
 import unittest
@@ -21,6 +34,25 @@ TINY = "hf-internal-testing/tiny-random-bert"
 SEQ_LEN = 8
 BATCH = 4
 N_LAYERS = 5  # tiny-random-bert has 5 hidden layers
+
+# Tiny checkpoint per architecture family used by configs/encoders/*.yaml.
+# Each exercises the same layer-discovery / pooling / init code paths as the
+# real model, at hidden size 32, so it stays fast and CPU/RAM friendly.
+#   vinai/bertweet-large         -> roberta
+#   microsoft/deberta-v3-large   -> deberta-v2
+#   answerdotai/ModernBERT-large -> modernbert
+ARCH_TINY = {
+    "roberta": "hf-internal-testing/tiny-random-roberta",
+    "deberta-v2": "hf-internal-testing/tiny-random-DebertaV2Model",
+    "modernbert": "hf-internal-testing/tiny-random-ModernBertForMaskedLM",
+}
+
+# Real production checkpoints, name -> (hf id, pooling). Opt-in only.
+REAL_ENCODERS = {
+    "bertweet-large": ("vinai/bertweet-large", "mean"),
+    "deberta-v3-large": ("microsoft/deberta-v3-large", "cls"),
+    "modernbert-large": ("answerdotai/ModernBERT-large", "cls"),
+}
 
 
 def make_encoder(**kwargs):
@@ -401,6 +433,76 @@ class ModuleSmokeTests(unittest.TestCase):
         loss.backward()
 
 
+class EncoderArchitectureTests(unittest.TestCase):
+    """Architecture-specific paths for the production encoder families.
+
+    ``tiny-random-bert`` only covers BERT's ``encoder.encoder.layer`` layout.
+    BERTweet (RoBERTa), DeBERTa-v3 (DeBERTa-v2) and ModernBERT differ in where
+    their transformer layers live, so freeze/reset can silently break on them.
+    """
+
+    def test_encoder_layers_resolve_and_freeze(self):
+        for arch, name in ARCH_TINY.items():
+            with self.subTest(arch=arch):
+                enc = make_encoder(name=name, pooling="cls")
+                layers = enc._encoder_layers()
+                self.assertGreater(len(layers), 0)
+
+                enc.freeze(layers=[0])
+                for p in layers[0].parameters():
+                    self.assertFalse(p.requires_grad)
+                self.assertTrue(any(p.requires_grad for p in layers[-1].parameters()))
+
+                enc.freeze(layers=[0], unfreeze=True)
+                for p in layers[0].parameters():
+                    self.assertTrue(p.requires_grad)
+
+    def test_reset_last_reinitializes_layers(self):
+        for arch, name in ARCH_TINY.items():
+            with self.subTest(arch=arch):
+                enc = make_encoder(name=name, pooling="cls", reset_last=1)
+                for p in enc.parameters():
+                    self.assertTrue(torch.isfinite(p).all())
+
+    def test_pooling_shapes(self):
+        for arch, name in ARCH_TINY.items():
+            for pooling in ("cls", "mean", "last"):
+                with self.subTest(arch=arch, pooling=pooling):
+                    enc = make_encoder(name=name, pooling=pooling)
+                    out = enc(_rand_ids(), torch.ones(BATCH, SEQ_LEN, dtype=torch.long))
+                    self.assertEqual(tuple(out.shape), (BATCH, enc.config.hidden_size))
+
+
+class ArchitectureTrainingTests(unittest.TestCase):
+    """A Lightning train loop must run for every production architecture family."""
+
+    def _fit(self, module, batch_fn):
+        trainer = _cpu_trainer(fast_dev_run=True)
+        trainer.fit(module, _DummyDataModule(batch_fn=batch_fn))
+
+    def test_single_task_training_runs(self):
+        for arch, name in ARCH_TINY.items():
+            for task, batch_fn in (("clf", clf_batch), ("reg", reg_batch)):
+                with self.subTest(arch=arch, task=task):
+                    module = modules.SingleTaskModule(
+                        encoder=make_encoder(name=name),
+                        task=task,
+                        scheduler=None,
+                    )
+                    self._fit(module, batch_fn)
+
+    def test_multitask_training_runs(self):
+        for arch, name in ARCH_TINY.items():
+            with self.subTest(arch=arch):
+                module = modules.MultiTaskModule(
+                    encoder=make_encoder(name=name),
+                    task="clf",
+                    loss_weight=0.5,
+                    scheduler=None,
+                )
+                self._fit(module, multitask_batch)
+
+
 class OptimizerConfigTests(unittest.TestCase):
     def test_dict_lr_gives_encoder_head_groups(self):
         module = modules.SingleTaskModule(
@@ -531,6 +633,98 @@ class TrainerIntegrationTests(unittest.TestCase):
             )
             self.assertAlmostEqual(restored.hparams.loss_weight, 0.3)
             self.assertFalse(restored.use_uncertainty_weighting)
+
+
+class MLflowLoggerTests(unittest.TestCase):
+    """The production trainer uses ``MLFlowLogger`` (configs/defaults.yaml).
+
+    Lightning logs scalar params/metrics to the run it owns, but the module's
+    text/figure logging goes through ``_log_text``/``_log_figure``. Those must
+    attach their artifacts to that *same* run. Using the fluent ``mlflow``
+    helpers instead silently starts an orphan run in the default experiment,
+    so these tests pin the run id the artifacts land in. They are the local
+    guard for the RunPod/Azure MLflow path.
+    """
+
+    def _fit(self, uri):
+        from lightning.pytorch.loggers import MLFlowLogger
+
+        logger = MLFlowLogger(
+            experiment_name="twitter-test", tracking_uri=uri, log_model=False
+        )
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        trainer = _cpu_trainer(
+            logger=logger,
+            max_epochs=1,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            num_sanity_val_steps=0,
+            log_every_n_steps=1,
+        )
+        trainer.fit(module, _DummyDataModule(n_batches=2))
+        return logger
+
+    def test_artifacts_attach_to_lightning_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            logger = self._fit("file:" + os.path.join(d, "mlruns"))
+            client = logger.experiment
+            run = client.get_run(logger.run_id)
+            self.assertIn("loss/validation", run.data.metrics)
+            artifacts = {a.path for a in client.list_artifacts(logger.run_id)}
+            self.assertIn("Confusion Matrix_validation.png", artifacts)
+            self.assertIn("Input_training", artifacts)
+            self.assertIn("Input_validation", artifacts)
+
+    def test_no_orphan_run_in_default_experiment(self):
+        with tempfile.TemporaryDirectory() as d:
+            logger = self._fit("file:" + os.path.join(d, "mlruns"))
+            client = logger.experiment
+            default = client.get_experiment_by_name("Default")
+            if default is not None:
+                self.assertEqual(client.search_runs([default.experiment_id]), [])
+
+
+@unittest.skipUnless(
+    os.environ.get("TWITTER_TEST_REAL_ENCODERS") == "1",
+    "set TWITTER_TEST_REAL_ENCODERS=1 to load the multi-GB production "
+    "checkpoints and run one CPU training step each (needs ~8 GB free RAM, "
+    "~5 GB disk for the HF cache, and network on first run)",
+)
+class RealEncoderIntegrationTests(unittest.TestCase):
+    """Opt-in check that the *actual* production checkpoints load and train.
+
+    The default suite uses tiny per-architecture checkpoints (``ARCH_TINY``) to
+    stay fast and light; this is the last stop before submitting a RunPod job.
+    Batch/sequence are kept tiny because it runs on CPU (32 GB RAM, no GPU).
+    """
+
+    def test_multitask_training_step(self):
+        for key, (name, pooling) in REAL_ENCODERS.items():
+            with self.subTest(encoder=key):
+                module = modules.MultiTaskModule(
+                    encoder=make_encoder(name=name, pooling=pooling),
+                    task="clf",
+                    loss_weight=0.5,
+                    scheduler=None,
+                )
+                batch = {
+                    "input_ids": _rand_ids(batch=2),
+                    "attention_mask": torch.ones(2, SEQ_LEN, dtype=torch.long),
+                    "labels": torch.stack(
+                        [
+                            torch.rand(2) * 2 - 1,
+                            torch.randint(0, 3, (2,)).float(),
+                        ],
+                        dim=1,
+                    ),
+                }
+                loss = module.training_step(batch, 0)
+                self.assertTrue(torch.isfinite(loss))
+                loss.backward()
+                del module, loss
+                gc.collect()
 
 
 if __name__ == "__main__":
