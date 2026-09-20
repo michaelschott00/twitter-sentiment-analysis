@@ -1,5 +1,5 @@
 - This environment is a docker container built from `dev/dev.Dockerfile` and `compose.yaml`. All changes to the environment should be documented in these files for future runs. The `docker` command itself is not available.
-- The local environment has no GPU (only intel integrated graphics).
+- The local environment has no GPU (only intel integrated graphics). Runpod is used for training runs requiring GPUs.
 - Tools requiring authentication are not available on the cli because this environment does not contain any credentials. That is, no GH_TOKEN, RUNPOD_API_KEY, etc. in this container. For most actions, mcp tools are available with the mcp servers handling the authentication.
 - Terraform is run on Terraform HCP, so `terraform plan/apply` cannot be run locally.
 - `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file. The dev image installs the project into a venv at `/opt/venv` (first on `PATH`), so use `pip`/`python`/`pytest` directly — no `--break-system-packages` is needed (that only applies to the bare system interpreter). Tools whose pinned deps clash with the project env get their own venv (e.g. `/opt/azcli` for azure-cli, to protect `omegaconf`'s antlr pin).
@@ -10,3 +10,5 @@
   - a build and push to docker hub of the runpod docker image if it or any of its dependencies have changed.
   - terraform hcp to create a plan. Any terraform changes have to be approved and applied by a human. It may take a while until a human is available to do this. Changes unrelated to terraform trigger a plan but don't require human approval.
 - Git worktrees should be created under `/home/agent/worktrees`, which is a dedicated docker volume.
+- Runpod cleans up logs after pods stop. Combined with autostop, this means that polling pod status to figure out when a run finished may lead to the logs being cleaned up before the next poll detects that the run has finished. Setting `RUNPOD_AUTO_STOP=0` to disable auto stop circumvents that issue. Do remember to stop up pods as soon as possible after reading the logs because they burn money while they're running.
+- Runpod keeps restarting containers after their command exits, looping until the pod is stopped.

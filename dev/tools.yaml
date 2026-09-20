@@ -92,6 +92,21 @@ tools:
         default_from: workspace
         default_flag: -w
 
+  - name: azml_model_archive
+    description: Archive AML models.
+    creds: [AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
+    needs_az_login: true
+    base_argv: [az, ml, model, archive]
+    params:
+      - names: [-g, --resource-group]
+        allow_regex: "^rg-[a-z0-9-]+$"
+        default_from: resource_group
+        default_flag: -g
+      - names: [-w, --workspace]
+        allow_regex: "^[a-zA-Z0-9][a-zA-Z0-9_-]{1,60}$"
+        default_from: workspace
+        default_flag: -w
+
   # mlflow
 
   - name: mlflow_runs
