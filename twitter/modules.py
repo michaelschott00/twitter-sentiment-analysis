@@ -196,15 +196,16 @@ class _BaseModule(pl.LightningModule):
     def _registered_model_name(self):
         """Registry name for this run's model, e.g. ``twitter-clf-bertweet-large``.
 
-        The encoder id is reduced to its final path component so the name stays
-        stable and readable (``vinai/bertweet-large`` -> ``bertweet-large``).
         Modules without an explicit ``task`` hparam (e.g. contrastive learning)
-        are classification-only, hence the ``clf`` fallback.
+        are classification-only, hence the ``clf`` fallback. The format lives in
+        ``twitter.mlflow_model.registry_name`` so the offline ``register_model``
+        CLI derives the same name.
         """
+        from twitter.mlflow_model import registry_name
+
         task = getattr(self.hparams, "task", None) or "clf"
         encoder_name = self._encoder_name() or "unknown-encoder"
-        short = encoder_name.rstrip("/").split("/")[-1]
-        return f"twitter-{task}-{short}"
+        return registry_name(encoder_name, task)
 
     def on_train_end(self):
         """Register the best checkpoint in the MLflow/Azure ML model registry.

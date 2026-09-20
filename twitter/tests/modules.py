@@ -912,7 +912,12 @@ class ModelRegistrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tracking = "file:" + os.path.join(d, "mlruns")
             logger = MLFlowLogger(experiment_name="twitter-test", tracking_uri=tracking)
-            ckpt = ModelCheckpoint(dirpath=os.path.join(d, "ckpts"), save_top_k=1)
+            # Match the production configs: weights-only keeps the upload small.
+            ckpt = ModelCheckpoint(
+                dirpath=os.path.join(d, "ckpts"),
+                save_top_k=1,
+                save_weights_only=True,
+            )
             trainer = _cpu_trainer(
                 logger=logger,
                 callbacks=[ckpt],
@@ -930,6 +935,13 @@ class ModelRegistrationTests(unittest.TestCase):
 
             self.assertTrue(ckpt.best_model_path)
             self.assertTrue(os.path.exists(ckpt.best_model_path))
+
+            # Weights-only must drop the optimizer state (the upload-size win)
+            # while keeping hyperparameters so load_from_checkpoint can rebuild
+            # the module; the pyfunc load below exercises exactly that path.
+            saved = torch.load(ckpt.best_model_path, map_location="cpu")
+            self.assertNotIn("optimizer_states", saved)
+            self.assertIn("hyper_parameters", saved)
 
             # on_train_end runs automatically at the end of fit(); registration
             # targets the task+encoder-derived name.
@@ -955,6 +967,85 @@ class ModelRegistrationTests(unittest.TestCase):
         )
         module._trainer = None
         module.on_train_end()  # must not raise
+
+    def test_registration_retries_after_upload_flush_timeout(self):
+        """A failed artifact upload must not lose the model.
+
+        Azure ML raises its flush timeout after the artifact has usually been
+        stored, so registration is attempted even when the upload raises; if it
+        truly did not land, the next attempt re-uploads to a fresh path.
+        """
+        from lightning.pytorch.callbacks import ModelCheckpoint
+        from lightning.pytorch.loggers import MLFlowLogger
+        from mlflow.tracking import MlflowClient
+
+        with tempfile.TemporaryDirectory() as d:
+            tracking = "file:" + os.path.join(d, "mlruns")
+            logger = MLFlowLogger(experiment_name="twitter-test", tracking_uri=tracking)
+            ckpt = ModelCheckpoint(
+                dirpath=os.path.join(d, "ckpts"),
+                save_top_k=1,
+                save_weights_only=True,
+            )
+            trainer = _cpu_trainer(
+                logger=logger,
+                callbacks=[ckpt],
+                enable_checkpointing=True,
+                max_epochs=1,
+                limit_train_batches=1,
+                limit_val_batches=1,
+                num_sanity_val_steps=0,
+                log_every_n_steps=1,
+            )
+            module = modules.SingleTaskModule(
+                encoder=make_encoder(), task="clf", scheduler=None
+            )
+
+            real = MlflowClient.log_artifacts
+            calls = {"n": 0}
+
+            def flaky(self, run_id, local_dir, artifact_path=None, **kwargs):
+                # Fail the first model-bundle upload *without* storing it, to
+                # force the retry path (fresh artifact path + register).
+                if artifact_path == "registered_model" and calls["n"] == 0:
+                    calls["n"] += 1
+                    raise RuntimeError("simulated Azure flush timeout")
+                return real(self, run_id, local_dir, artifact_path, **kwargs)
+
+            with (
+                unittest.mock.patch.object(MlflowClient, "log_artifacts", flaky),
+                unittest.mock.patch("twitter.mlflow_model.time.sleep"),
+            ):
+                trainer.fit(module, _DummyDataModule(batch_fn=clf_batch, n_batches=2))
+
+            self.assertEqual(calls["n"], 1)
+            name = "twitter-clf-tiny-random-bert"
+            versions = MlflowClient(tracking_uri=tracking).search_model_versions(
+                f"name='{name}'"
+            )
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].run_id, logger.run_id)
+
+    def test_registry_name_helper(self):
+        from twitter.mlflow_model import registry_name
+
+        self.assertEqual(
+            registry_name("vinai/bertweet-large", "clf"), "twitter-clf-bertweet-large"
+        )
+        self.assertEqual(
+            registry_name("answerdotai/ModernBERT-large"),
+            "twitter-clf-ModernBERT-large",
+        )
+
+    def test_register_model_cli_derives_name_from_run_params(self):
+        from twitter.register_model import _derive_name
+
+        client = unittest.mock.MagicMock()
+        client.get_run.return_value.data.params = {
+            "encoder_name": "vinai/bertweet-large",
+            "task": "clf",
+        }
+        self.assertEqual(_derive_name(client, "run-id"), "twitter-clf-bertweet-large")
 
 
 class LogDirFallbackConfigCallbackTests(unittest.TestCase):

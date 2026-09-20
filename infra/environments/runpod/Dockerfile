@@ -11,6 +11,13 @@ FROM runpod/base:1.3.1-cuda1281-ubuntu2404
 WORKDIR /project
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Azure ML's MLflow plugin flushes queued artifact uploads with a hard 300s
+# timeout. The `registered_model` bundle wraps a multi-GB checkpoint, and on a
+# slow pod link (or when several runs upload at once) the flush can exceed that
+# limit ("Failed to flush task queue within 300.0 seconds"), failing model
+# registration even though the run and metrics are already logged. Raise it for
+# every run; twitter.mlflow_model also retries registration.
+ENV AZUREML_ARTIFACTS_DEFAULT_TIMEOUT=900
 
 COPY ./pyproject.toml ./README.md ./
 COPY ./twitter ./twitter

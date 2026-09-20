@@ -14,6 +14,7 @@ the module when ``predict`` is called.
 import json
 import os
 import shutil
+import time
 
 import mlflow
 import mlflow.pyfunc
@@ -81,6 +82,16 @@ class SentimentModel(mlflow.pyfunc.PythonModel):
         return np.array([LABELS[int(p)] for p in preds])
 
 
+def registry_name(encoder_name: str, task: str = "clf") -> str:
+    """Registry name for a run, e.g. ``twitter-clf-bertweet-large``.
+
+    The encoder id is reduced to its final path component so the name stays
+    stable and readable (``vinai/bertweet-large`` -> ``bertweet-large``).
+    """
+    short = encoder_name.rstrip("/").split("/")[-1]
+    return f"twitter-{task}-{short}"
+
+
 def log_and_register(
     logger,
     checkpoint_path: str,
@@ -88,6 +99,8 @@ def log_and_register(
     registered_model_name: str,
     module_class: str,
     artifact_path: str = "registered_model",
+    max_attempts: int = 3,
+    retry_delay: float = 10.0,
 ):
     """Package ``checkpoint_path`` as an MLflow model and register it.
 
@@ -96,6 +109,15 @@ def log_and_register(
     the logger's client so no global active run is required, matching the
     artifact-logging approach in ``twitter.modules``. ``module_class`` is the
     fully-qualified Lightning module class needed to rebuild the model.
+
+    Azure ML's MLflow plugin raises a flush timeout when a large artifact
+    upload does not finish within ``AZUREML_ARTIFACTS_DEFAULT_TIMEOUT``, but by
+    then the artifact is usually already stored. Registration is therefore
+    attempted even when the upload raises, and the upload+register pair is
+    retried ``max_attempts`` times. Each retry uses a fresh artifact path
+    because Azure ML rejects re-uploading to an existing one. Callers
+    (``on_train_end``) treat a final failure as non-fatal; the run id can be
+    passed to ``python -m twitter.register_model`` to retry later.
     """
     work_dir = os.path.dirname(checkpoint_path) or "."
     meta_path = os.path.join(work_dir, "model_meta.json")
@@ -121,7 +143,25 @@ def log_and_register(
 
     client = logger.experiment
     run_id = logger.run_id
-    client.log_artifacts(run_id, model_dir, artifact_path)
-    return mlflow.register_model(
-        f"runs:/{run_id}/{artifact_path}", registered_model_name
-    )
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        path = artifact_path if attempt == 1 else f"{artifact_path}_retry{attempt}"
+        try:
+            client.log_artifacts(run_id, model_dir, path)
+        except Exception as e:  # noqa: BLE001
+            # The flush timeout is raised *after* the artifact has normally
+            # landed; registration below still succeeds in that case. If it did
+            # not land, registration fails and the next attempt re-uploads to a
+            # fresh path.
+            last_error = e
+            print(f"Checkpoint upload attempt {attempt} raised: {e}")
+        try:
+            return mlflow.register_model(
+                f"runs:/{run_id}/{path}", registered_model_name
+            )
+        except Exception as e:  # noqa: BLE001
+            last_error = e
+            if attempt < max_attempts:
+                print(f"Model registration attempt {attempt} failed: {e}; retrying")
+                time.sleep(retry_delay * attempt)
+    raise last_error
