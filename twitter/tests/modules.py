@@ -24,6 +24,7 @@ import gc
 import os
 import tempfile
 import unittest
+import unittest.mock
 from collections import UserDict
 
 import lightning.pytorch as pl
@@ -862,6 +863,71 @@ class ModelRegistrationTests(unittest.TestCase):
         )
         module._trainer = None
         module.on_train_end()  # must not raise
+
+
+class LogDirFallbackConfigCallbackTests(unittest.TestCase):
+    """Regression: non-local MLflow loggers must not crash SaveConfigCallback.
+
+    Lightning's ``MLFlowLogger.save_dir`` is ``None`` for any non-``file:``
+    tracking URI, so ``trainer.log_dir`` is ``None`` on every RunPod/AML run.
+    The stock ``SaveConfigCallback.setup`` asserts ``log_dir is not None`` and
+    killed the run right after the (successful) MLflow run was created. The
+    CLI's fallback callback must instead log the config to the MLflow run.
+    """
+
+    def test_config_logged_to_mlflow_when_log_dir_is_none(self):
+        import mlflow
+        from lightning.pytorch.loggers import MLFlowLogger
+
+        from twitter.main import _LogDirFallbackConfigCallback
+
+        with tempfile.TemporaryDirectory() as d:
+            tracking = "file:" + os.path.join(d, "mlruns")
+            logger = MLFlowLogger(experiment_name="twitter-test", tracking_uri=tracking)
+            # Force the Azure-style case: a logger without a filesystem
+            # save_dir, i.e. trainer.log_dir is None during setup.
+            with unittest.mock.patch.object(
+                type(logger), "save_dir", new=property(lambda self: None)
+            ):
+                parser = unittest.mock.MagicMock()
+
+                def _write_config(*args, **kwargs):
+                    with open(args[1], "w") as fh:
+                        fh.write("seed_everything: 42\n")
+
+                parser.save.side_effect = _write_config
+                callback = _LogDirFallbackConfigCallback(
+                    parser=parser,
+                    config={},
+                    config_filename="config.yaml",
+                )
+                trainer = unittest.mock.MagicMock()
+                trainer.log_dir = None
+                trainer.loggers = [logger]
+                trainer.is_global_zero = True
+                trainer.strategy.broadcast = lambda value: value
+
+                callback.setup(trainer, None, "fit")
+
+            client = mlflow.MlflowClient(tracking_uri=tracking)
+            artifacts = {a.path for a in client.list_artifacts(logger.run_id)}
+            self.assertIn("config.yaml", artifacts)
+
+    def test_setup_delegates_when_log_dir_exists(self):
+        from lightning.pytorch.cli import SaveConfigCallback
+
+        from twitter.main import _LogDirFallbackConfigCallback
+
+        callback = _LogDirFallbackConfigCallback(
+            parser=unittest.mock.MagicMock(),
+            config={},
+            config_filename="config.yaml",
+        )
+        trainer = unittest.mock.MagicMock()
+        trainer.log_dir = "/tmp/somewhere"
+        with unittest.mock.patch.object(SaveConfigCallback, "setup") as stock_setup:
+            callback.setup(trainer, None, "fit")
+        stock_setup.assert_called_once_with(trainer, None, "fit")
 
 
 @unittest.skipUnless(
