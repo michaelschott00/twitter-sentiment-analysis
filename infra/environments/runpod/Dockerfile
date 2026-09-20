@@ -65,13 +65,19 @@ fi
 # immediately when no command is given. Override with any Lightning run,
 # e.g.: python -m twitter.main --config configs/tasks/classification.yaml \
 #   --config configs/encoders/bertweet_large.yaml
-AUTO_STOP=1
+# REAL_RUN distinguishes a real training invocation from the `--help`/debug
+# default. Data download + the MLflow reachability check run for every real
+# run, independent of AUTO_STOP: opting out of the self-stop
+# (`RUNPOD_AUTO_STOP=0`) must not also silently skip data preparation and
+# crash training with a missing-CSV error.
+REAL_RUN=1
 if [ "$#" -eq 0 ]; then
   # The entrypoint already prepends `python -m twitter.main`, so only the
   # CLI flags belong here.
   set -- --help
-  AUTO_STOP=0
+  REAL_RUN=0
 fi
+AUTO_STOP=$REAL_RUN
 case "${RUNPOD_AUTO_STOP:-}" in
   0|false|False|FALSE|no|No|NO)
     AUTO_STOP=0
@@ -103,7 +109,7 @@ trap stop_pod EXIT
 DEST="${SPLITS_DIR:-data/splits}"
 DATA_NAME="${DATA_NAME:-twitter-splits}"
 DATA_VERSION="${DATA_VERSION:-1}"
-if [ "$AUTO_STOP" -eq 1 ]; then
+if [ "$REAL_RUN" -eq 1 ]; then
   case "${SKIP_DATA_DOWNLOAD:-0}" in
     1|true|True|TRUE|yes|Yes|YES)
       echo "run.sh: skipping splits download (SKIP_DATA_DOWNLOAD set)" >&2
@@ -167,8 +173,8 @@ if [ "$AUTO_STOP" -eq 1 ]; then
   # Fail fast if MLflow cannot reach the configured tracking backend. Without
   # this, lightning's MLFlowLogger silently falls back to a local file store
   # (file:./mlruns) and the pod is stopped before anyone notices the run never
-  # reached Azure. Only real runs (AUTO_STOP=1) are checked; `--help`/debug
-  # shells may legitimately run without MLflow.
+  # reached Azure. Only real runs are checked; `--help`/debug shells may
+  # legitimately run without MLflow.
   case "${SKIP_MLFLOW_CHECK:-0}" in
     1|true|True|TRUE|yes|Yes|YES)
       echo "run.sh: skipping MLflow reachability check (SKIP_MLFLOW_CHECK set)" >&2
