@@ -17,7 +17,7 @@ ARG AZCOPY_VERSION=10.32.7
 ARG RUNPODCTL_VERSION=2.14.0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates bash \
+    && apt-get install -y --no-install-recommends curl ca-certificates bash less \
     && rm -rf /var/lib/apt/lists/*
 
 # Azure CLI (pinned) + ML extension + mlflow.

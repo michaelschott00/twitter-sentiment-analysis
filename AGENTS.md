@@ -8,4 +8,5 @@
 - Git pushes should go to the `dev` branch of the `origin-http` remote.
 - A push to the `dev` branch triggers:
   - a build and push to docker hub of the runpod docker image if it or any of its dependencies have changed.
-  - terraform hcp to create a plan, which then has to be approved and applied by a human. It may take a while until a human is available to do this.
+  - terraform hcp to create a plan. Any terraform changes have to be approved and applied by a human. It may take a while until a human is available to do this. Changes unrelated to terraform trigger a plan but don't require human approval.
+- Git worktrees should be created under `/home/agent/worktrees`, which is a dedicated docker volume.
