@@ -15,6 +15,8 @@ Usage:
     python -m twitter.plots compare --experiment-name twitter-sentiment
     python -m twitter.plots compare --experiment-name twitter-sentiment \\
         --run-ids abc123,def456 --output comparison.png
+    python -m twitter.plots compare --experiment-name twitter-sentiment \\
+        --table --output comparison.csv
 """
 
 from __future__ import annotations
@@ -39,6 +41,16 @@ RMSE_CANDIDATES = [
     "RMSE",
 ]
 
+# Presentable display names keyed by the MLflow run name (case-insensitive).
+MODEL_DISPLAY_NAMES = {
+    "clf-bertweet-large": "BERTweet-large",
+    "clf-deberta-v3-large": "DeBERTa-v3-large",
+    "clf-modernbert-large": "ModernBERT-large",
+    "clf-sentence-bert-base": "Sentence-BERT-base",
+    "lightgbm-baseline-cpu": "LightGBM (TF-IDF)",
+    "llm-baseline": "GPT-5.6 Luna",
+}
+
 
 def _setup_tracking(tracking_uri: str | None) -> None:
     import mlflow
@@ -50,8 +62,8 @@ def _setup_tracking(tracking_uri: str | None) -> None:
 
 def _resolve_experiment_ids(
     experiment_names: tuple[str, ...] | None, experiment_ids: tuple[str, ...] | None
-) -> list[str] | None:
-    """Return experiment ids, or None to mean 'use active/default experiment'."""
+) -> list[str]:
+    """Return experiment ids, prompting for a selection if none are given."""
     import mlflow
 
     ids: list[str] = list(experiment_ids or [])
@@ -60,7 +72,9 @@ def _resolve_experiment_ids(
         if exp is None:
             raise click.ClickException(f"Experiment not found: {name!r}")
         ids.append(exp.experiment_id)
-    return ids or None
+    if ids:
+        return ids
+    return _prompt_experiment_ids()
 
 
 def _fetch_runs(
@@ -84,11 +98,14 @@ def _fetch_runs(
     return mlflow.search_runs(**kwargs)
 
 
+def _is_failed(run) -> bool:
+    return (run.info.status or "").upper() == "FAILED"
+
+
 def _run_label(run) -> str:
     name = (run.data.tags or {}).get("mlflow.runName") or run.info.run_name
-    if name:
-        return f"{name} ({run.info.run_id[:8]})"
-    return run.info.run_id[:8]
+    display = MODEL_DISPLAY_NAMES.get((name or "").lower(), name)
+    return display or run.info.run_id[:8]
 
 
 def _find_metric(
@@ -104,6 +121,31 @@ def _find_metric(
             except (TypeError, ValueError):
                 return key, None
     return None, None
+
+
+def _best_metric(
+    run, candidates: list[str], higher_is_better: bool
+) -> tuple[str | None, float | None]:
+    """Best logged value for the first matching metric key.
+
+    Early stopping means the best value may have been logged before the final
+    one, so read the full metric history and pick max (F1) / min (RMSE).
+    """
+    import mlflow
+
+    key, last = _find_metric(run.data.metrics or {}, candidates)
+    if key is None:
+        return None, None
+    try:
+        history = mlflow.tracking.MlflowClient().get_metric_history(
+            run.info.run_id, key
+        )
+    except Exception:  # noqa: BLE001
+        return key, last
+    values = [m.value for m in history if m.value is not None]
+    if not values:
+        return key, last
+    return key, max(values) if higher_is_better else min(values)
 
 
 def _parse_selection(selection: str, n: int) -> list[int]:
@@ -137,14 +179,37 @@ def _parse_selection(selection: str, n: int) -> list[int]:
     return sorted(indices)
 
 
+def _print_experiments_table(experiments) -> None:
+    header = f"{'idx':>4}  {'experiment':<40}  experiment_id"
+    click.echo(header)
+    click.echo("-" * len(header))
+    for i, exp in enumerate(experiments):
+        click.echo(f"{i:>4}  {(exp.name or ''):<40}  {exp.experiment_id}")
+
+
+def _prompt_experiment_ids() -> list[str]:
+    """List experiments and prompt the user to select one or more."""
+    import mlflow
+
+    experiments = mlflow.search_experiments()
+    if not experiments:
+        raise click.ClickException("No experiments found.")
+    _print_experiments_table(experiments)
+    answer = click.prompt(
+        "Select experiments (comma-separated indices, ranges, or 'all')",
+        default="all",
+    )
+    indices = _parse_selection(answer, len(experiments))
+    return [experiments[i].experiment_id for i in indices]
+
+
 def _print_runs_table(runs) -> None:
     header = f"{'idx':>4}  {'run':<36}  {'status':<10}  metrics"
     click.echo(header)
     click.echo("-" * len(header))
     for i, run in enumerate(runs):
-        metrics = run.data.metrics or {}
-        f1_key, f1_val = _find_metric(metrics, F1_CANDIDATES)
-        rmse_key, rmse_val = _find_metric(metrics, RMSE_CANDIDATES)
+        f1_key, f1_val = _best_metric(run, F1_CANDIDATES, higher_is_better=True)
+        rmse_key, rmse_val = _best_metric(run, RMSE_CANDIDATES, higher_is_better=False)
         summary = []
         if f1_val is not None:
             summary.append(f"{f1_key}={f1_val:.4f}")
@@ -156,15 +221,65 @@ def _print_runs_table(runs) -> None:
         )
 
 
+def _print_results_table(labels, f1_vals, rmse_vals) -> None:
+    cols = []
+    if any(v is not None for v in f1_vals):
+        cols.append(("F1", f1_vals))
+    if any(v is not None for v in rmse_vals):
+        cols.append(("RMSE", rmse_vals))
+    header = f"{'model':<32}" + "".join(f"  {name:>8}" for name, _ in cols)
+    header = header.rstrip()
+    click.echo(header)
+    click.echo("-" * len(header))
+    for i, label in enumerate(labels):
+        row = f"{label:<32}"
+        for _, vals in cols:
+            val = vals[i]
+            cell = f"{val:.4f}" if val is not None else "n/a"
+            row += f"  {cell:>8}"
+        click.echo(row.rstrip())
+
+
+def _save_results_csv(labels, f1_vals, rmse_vals, output: str) -> None:
+    import csv
+
+    include_f1 = any(v is not None for v in f1_vals)
+    include_rmse = any(v is not None for v in rmse_vals)
+    fields = ["model"]
+    if include_f1:
+        fields.append("f1")
+    if include_rmse:
+        fields.append("rmse")
+
+    with open(output, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(fields)
+        for i, label in enumerate(labels):
+            row = [label]
+            if include_f1:
+                row.append(f1_vals[i])
+            if include_rmse:
+                row.append(rmse_vals[i])
+            writer.writerow(row)
+    click.echo(f"Saved results table to {output}")
+
+
 def _plot_comparison(
     labels: list[str], f1_vals, rmse_vals, output: str | None, show: bool
 ) -> None:
     try:
         import matplotlib.pyplot as plt
+        import seaborn as sns
     except ImportError as e:
         raise click.ClickException(
-            "matplotlib is required for plotting (pip install -e '.[torch]')."
+            "matplotlib and seaborn are required for plotting "
+            "(pip install -e '.[dev]')."
         ) from e
+
+    sns.set_style("whitegrid")
+    palette = sns.color_palette("colorblind", n_colors=max(len(labels), 1))
+    hatches = ["", "//", "\\\\", "xx", "..", "++", "oo", "**", "OO", "--"]
+    colors = [palette[i % len(palette)] for i in range(len(labels))]
 
     panels = []
     if any(v is not None for v in f1_vals):
@@ -184,27 +299,39 @@ def _plot_comparison(
     for ax, panel in zip(axes, panels):
         if panel == "f1":
             vals = [v if v is not None else float("nan") for v in f1_vals]
-            ax.bar(labels, vals, color="steelblue")
             ax.set_title("F1-Score (higher is better)")
             ax.set_ylabel("Macro F1")
         else:
             vals = [v if v is not None else float("nan") for v in rmse_vals]
-            ax.bar(labels, vals, color="darkorange")
             ax.set_title("RMSE (lower is better)")
             ax.set_ylabel("RMSE")
-        ax.set_xlabel("Run")
+        sns.barplot(
+            x=labels,
+            y=vals,
+            hue=labels,
+            palette=colors,
+            ax=ax,
+            errorbar=None,
+            legend=False,
+            dodge=False,
+            edgecolor="white",
+        )
+        for patch in ax.patches:
+            idx = round(patch.get_x() + patch.get_width() / 2)
+            if 0 <= idx < len(hatches):
+                patch.set_hatch(hatches[idx % len(hatches)])
+                patch.set_edgecolor("white")
         ax.tick_params(axis="x", rotation=30)
         for x, v in zip(labels, vals):
             import math
 
             if v is not None and not math.isnan(v):
                 ax.text(x, v, f"{v:.4f}", ha="center", va="bottom", fontsize=9)
-    fig.suptitle("MLflow run comparison")
     fig.tight_layout()
     if output:
         fig.savefig(output, dpi=150)
         click.echo(f"Saved bar chart to {output}")
-    if show:
+    if show or not output:
         plt.show()
     else:
         plt.close(fig)
@@ -291,9 +418,15 @@ def list_runs(
 )
 @click.option(
     "--output",
-    default="run_comparison.png",
-    show_default=True,
-    help="Path to save the bar chart PNG.",
+    default=None,
+    help="Path to save the output (PNG, or CSV with --table). "
+    "Nothing is saved unless this is set.",
+)
+@click.option(
+    "--table",
+    is_flag=True,
+    default=False,
+    help="Print a results table (CSV if --output is set) instead of plotting.",
 )
 @click.option("--show/--no-show", default=False, help="Display the plot interactively.")
 def compare(
@@ -306,6 +439,7 @@ def compare(
     select,
     metric,
     output,
+    table,
     show,
 ):
     """List runs, select several, and plot F1/RMSE bars for comparison."""
@@ -338,6 +472,10 @@ def compare(
         if not runs:
             click.echo("No runs found.")
             return
+        runs = [r for r in runs if not _is_failed(r)]
+        if not runs:
+            click.echo("No non-failed runs found.")
+            return
         _print_runs_table(runs)
         if select:
             indices = _parse_selection(select, len(runs))
@@ -351,9 +489,8 @@ def compare(
 
     labels, f1_vals, rmse_vals = [], [], []
     for run in runs:
-        metrics = run.data.metrics or {}
-        _, f1 = _find_metric(metrics, F1_CANDIDATES)
-        _, rmse = _find_metric(metrics, RMSE_CANDIDATES)
+        _, f1 = _best_metric(run, F1_CANDIDATES, higher_is_better=True)
+        _, rmse = _best_metric(run, RMSE_CANDIDATES, higher_is_better=False)
         labels.append(_run_label(run))
         f1_vals.append(f1)
         rmse_vals.append(rmse)
@@ -365,6 +502,12 @@ def compare(
         rmse_vals = [None] * len(rmse_vals)
     elif metric == "rmse":
         f1_vals = [None] * len(f1_vals)
+
+    if table:
+        _print_results_table(labels, f1_vals, rmse_vals)
+        if output:
+            _save_results_csv(labels, f1_vals, rmse_vals, output)
+        return
 
     _plot_comparison(labels, f1_vals, rmse_vals, output, show)
 
