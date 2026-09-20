@@ -520,7 +520,7 @@ Use the **workspace-backed MLflow Model Registry** for model versioning, registe
 Artifacts to log per run:
 
 - `configs/*.yaml` (as `mlflow.log_artifact`)
-- Checkpoint `*.ckpt` (via `ModelCheckpoint` + `MLFlowLogger(log_model=True)` → `MLmodel` + `python_env.yaml`)
+- Checkpoint `*.ckpt`, packaged by `on_train_end` into the `registered_model` `mlflow.pyfunc` artifact (`MLmodel` + `python_env.yaml` + the bundled checkpoint). `MLFlowLogger(log_model=True)` is intentionally **disabled**: it uploads the same checkpoint in `finalize()` before `set_terminated()`, and a failed/timed-out duplicate upload to Azure ML leaves the run stuck at `RUNNING` even after the pod exits.
 - Tokenizer (`AutoTokenizer.save_pretrained` → artifact)
 - Metrics CSV + confusion matrix PNG + `lightning_logs/` summary
 - `requirements.txt` hash for reproducibility

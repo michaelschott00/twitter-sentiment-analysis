@@ -732,6 +732,60 @@ class MLflowLoggerTests(unittest.TestCase):
             if default is not None:
                 self.assertEqual(client.search_runs([default.experiment_id]), [])
 
+    def _fit_with_checkpoint(self, d, tracking, log_model):
+        from lightning.pytorch.callbacks import ModelCheckpoint
+        from lightning.pytorch.loggers import MLFlowLogger
+
+        logger = MLFlowLogger(
+            experiment_name="twitter-test", tracking_uri=tracking, log_model=log_model
+        )
+        ckpt = ModelCheckpoint(dirpath=os.path.join(d, "ckpts"), save_top_k=1)
+        trainer = _cpu_trainer(
+            logger=logger,
+            callbacks=[ckpt],
+            enable_checkpointing=True,
+            max_epochs=1,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            num_sanity_val_steps=0,
+            log_every_n_steps=1,
+        )
+        module = modules.SingleTaskModule(
+            encoder=make_encoder(), task="clf", scheduler=None
+        )
+        trainer.fit(module, _DummyDataModule(batch_fn=clf_batch, n_batches=2))
+        return logger
+
+    def test_checkpoint_upload_failure_leaves_run_finished_when_log_model_off(self):
+        """Regression: a failed checkpoint upload during finalize must not strand
+        the run in ``RUNNING``.
+
+        Lightning's ``MLFlowLogger`` (with ``log_model=True``) uploads the
+        best ``ModelCheckpoint`` in ``finalize()`` *before* calling
+        ``set_terminated``. On Azure ML that upload can fail (the checkpoint
+        was already uploaded inside ``registered_model``), so ``finalize``
+        raises before the run is terminated and the run is stuck at RUNNING
+        even though the pod exits. The production config must therefore leave
+        Lightning checkpoint logging off; ``on_train_end`` registers the model
+        instead.
+        """
+        from mlflow.tracking import MlflowClient
+
+        with tempfile.TemporaryDirectory() as d:
+            tracking = "file:" + os.path.join(d, "mlruns")
+            real = MlflowClient.log_artifacts
+
+            def boom(self, run_id, local_dir, artifact_path=None, **kwargs):
+                if artifact_path and str(artifact_path).startswith("epoch="):
+                    raise RuntimeError("simulated Azure artifact failure")
+                return real(self, run_id, local_dir, artifact_path, **kwargs)
+
+            with unittest.mock.patch.object(MlflowClient, "log_artifacts", boom):
+                logger = self._fit_with_checkpoint(d, tracking, log_model=False)
+
+            status = logger.experiment.get_run(logger.run_id).info.status
+            self.assertEqual(status, "FINISHED")
+
 
 class MLflowTrackingUriTests(unittest.TestCase):
     """Guards the RunPod -> Azure ML tracking path configuration.
@@ -763,6 +817,20 @@ class MLflowTrackingUriTests(unittest.TestCase):
             init_args,
             "configs/defaults.yaml must omit tracking_uri so Lightning's "
             "os.getenv('MLFLOW_TRACKING_URI') default applies",
+        )
+
+    def test_defaults_yaml_disables_lightning_checkpoint_logging(self):
+        """The raw checkpoint is already in the ``registered_model`` artifact.
+
+        Lightning's ``finalize`` uploads it *before* ``set_terminated``; a
+        failure/duplicate-upload there strands the run at RUNNING, so the
+        production config must disable it.
+        """
+        init_args = self._logger_from_defaults_yaml(tracking_uri_value=None)
+        self.assertFalse(
+            init_args.get("log_model"),
+            "configs/defaults.yaml must set log_model: false; on_train_end "
+            "registers the best checkpoint instead",
         )
 
     def test_omitted_tracking_uri_uses_env_var(self):

@@ -23,7 +23,15 @@ trainer:
       # ${...} here either: with parser_mode=omegaconf that would be parsed
       # as a config interpolation.
       tags: { model: sbert, task: clf }
-      log_model: true
+      # log_model is disabled on purpose. Lightning's MLFlowLogger uploads the
+      # ModelCheckpoint in finalize() *before* it calls set_terminated(); if
+      # that upload fails (Azure ML rejects/times out the multi-GB duplicate of
+      # a checkpoint already uploaded inside `registered_model`), finalize
+      # raises before terminating the run and the run is left RUNNING forever.
+      # twitter.modules.on_train_end already packages and registers the best
+      # checkpoint (with its `registered_model` artifact), so the raw duplicate
+      # is redundant. Keep this false so finalize only marks the run finished.
+      log_model: false
   callbacks: null
   fast_dev_run: false
   max_epochs: null
