@@ -67,7 +67,9 @@ fi
 #   --config configs/encoders/bertweet_large.yaml
 AUTO_STOP=1
 if [ "$#" -eq 0 ]; then
-  set -- python -m twitter.main --help
+  # The entrypoint already prepends `python -m twitter.main`, so only the
+  # CLI flags belong here.
+  set -- --help
   AUTO_STOP=0
 fi
 case "${RUNPOD_AUTO_STOP:-}" in
@@ -75,6 +77,25 @@ case "${RUNPOD_AUTO_STOP:-}" in
     AUTO_STOP=0
     ;;
 esac
+
+# Stop the pod on *any* exit (success, training error, or a failure in the
+# data-download/MLflow checks) when AUTO_STOP is on. Doing this in an EXIT trap
+# is essential because `set -e` aborts the script at the failing command, so a
+# trailing `runpodctl stop` after the training command would be skipped on error
+# and the GPU pod would keep billing.
+stop_pod() {
+  exit_code=$?
+  if [ "${AUTO_STOP:-0}" -eq 1 ]; then
+    if [ -n "${RUNPOD_POD_ID:-}" ] && command -v runpodctl >/dev/null 2>&1; then
+      echo "run.sh: stopping pod $RUNPOD_POD_ID (exit=$exit_code)" >&2
+      runpodctl stop pod "$RUNPOD_POD_ID" || echo "run.sh: runpodctl stop pod failed" >&2
+    else
+      echo "run.sh: skipping pod stop (RUNPOD_POD_ID unset or runpodctl missing)" >&2
+    fi
+  fi
+  exit "$exit_code"
+}
+trap stop_pod EXIT
 
 # Download twitter-splits (tweets_{train,dev,test_1,test_2}.csv) so
 # TwitterDataModule(root_dir=data/splits) works. Only for real runs,
@@ -180,22 +201,14 @@ PY
   esac
 fi
 
-# Run main command
+# Run main command. The EXIT trap above stops the pod afterwards, including
+# when this command (or any earlier step) fails.
 python -m twitter.main "$@"
-
-# Autostop runpod pod if specified
-EXIT_CODE=$?
-if [ "$AUTO_STOP" -eq 1 ]; then
-  if [ -n "${RUNPOD_POD_ID:-}" ] && command -v runpodctl >/dev/null 2>&1; then
-    runpodctl stop pod "$RUNPOD_POD_ID"
-  else
-    echo "run.sh: skipping pod stop (RUNPOD_POD_ID unset or runpodctl missing)" >&2
-  fi
-fi
-exit "$EXIT_CODE"
 EOF
 
 RUN chmod +x /usr/local/bin/run.sh
 
+# No CMD: with no docker args, run.sh runs `python -m twitter.main --help`
+# (AUTO_STOP=0) instead of the old CMD, which the entrypoint would have
+# prepended a second `python -m twitter.main` to.
 ENTRYPOINT ["/usr/local/bin/run.sh"]
-CMD ["python", "-m", "twitter.main", "--help"]
