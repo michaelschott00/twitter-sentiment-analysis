@@ -10,7 +10,7 @@ ENV HOME=/home/agent \
     PORT=8004 \
     TOOLS_YAML=/workspace/dev/tools.yaml
 
-ARG AZURE_CLI_VERSION=2.90.0
+ARG AZURE_CLI_VERSION=2.80.0
 ARG ML_EXTENSION_VERSION=2.44.1
 ARG GH_VERSION=2.101.0
 ARG AZCOPY_VERSION=10.32.7
@@ -20,9 +20,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates bash \
     && rm -rf /var/lib/apt/lists/*
 
-# Azure CLI (pinned) + ML extension.
+# Azure CLI (pinned) + ML extension + mlflow.
 RUN --mount=type=cache,id=pip-gw,target=/home/agent/.cache/pip,sharing=locked \
-    pip install --break-system-packages azure-cli==${AZURE_CLI_VERSION} "mcp[cli]==2.2.0" pyyaml==6.0.3
+    pip install --break-system-packages \
+      "azure-cli==${AZURE_CLI_VERSION}" \
+      "mcp[cli]==2.2.0" \
+      "pyyaml==6.0.3" \
+      "mlflow==2.16.2" \
+      "azureml-mlflow==1.62.0.post6"
 
 # gh CLI (pinned .deb).
 RUN curl -fsSL -o /tmp/gh.deb \

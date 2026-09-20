@@ -60,6 +60,7 @@ if [ -f /start.sh ]; then
   # Wait for services to start
   sleep 2
 fi
+
 # Default to showing LightningCLI help so the container does not exit
 # immediately when no command is given. Override with any Lightning run,
 # e.g.: python -m twitter.main --config configs/tasks/classification.yaml \
@@ -74,6 +75,7 @@ case "${RUNPOD_AUTO_STOP:-}" in
     AUTO_STOP=0
     ;;
 esac
+
 # Download twitter-splits (tweets_{train,dev,test_1,test_2}.csv) so
 # TwitterDataModule(root_dir=data/splits) works. Only for real runs,
 # so `--help` / debug shells don't require Azure credentials.
@@ -177,7 +179,11 @@ PY
       ;;
   esac
 fi
-"$@"
+
+# Run main command
+python -m twitter.main "$@"
+
+# Autostop runpod pod if specified
 EXIT_CODE=$?
 if [ "$AUTO_STOP" -eq 1 ]; then
   if [ -n "${RUNPOD_POD_ID:-}" ] && command -v runpodctl >/dev/null 2>&1; then

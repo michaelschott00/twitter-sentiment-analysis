@@ -33,6 +33,7 @@ services:
       - ../.github.env
       - ../.runpod.env
       - ../.azure.env
+      - ../.dev.env
     environment:
       - PORT=8004
 
