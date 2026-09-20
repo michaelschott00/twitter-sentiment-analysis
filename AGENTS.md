@@ -4,6 +4,7 @@
 - Terraform is run on Terraform HCP, so `terraform plan/apply` cannot be run locally.
 - `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file. The dev image installs the project into a venv at `/opt/venv` (first on `PATH`), so use `pip`/`python`/`pytest` directly — no `--break-system-packages` is needed (that only applies to the bare system interpreter). Tools whose pinned deps clash with the project env get their own venv (e.g. `/opt/azcli` for azure-cli, to protect `omegaconf`'s antlr pin).
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
+- LightningCLI (jsonargparse) config overrides must be passed as options: prefix every `key=value` with `--` (e.g. `--trainer.max_epochs=1`, not `trainer.max_epochs=1`). A bare `key=value` is rejected with `error: unrecognized arguments`. Both `--key=value` and `--key value` work. This has been a repeated mistake, so check any example command before running it.
 - Scripts with `click` based CLI are always preferred over jupyter notebooks.
 - Git pushes should go to the `dev` branch of the `origin-http` remote.
 - A push to the `dev` branch triggers:

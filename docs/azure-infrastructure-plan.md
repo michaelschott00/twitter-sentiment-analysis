@@ -270,8 +270,13 @@ inputs:
 ```text
 python -m twitter.main \
   --config ... \
-  data.init_args.root_dir=${{inputs.splits}}
+  --data.init_args.root_dir=${{inputs.splits}}
 ```
+
+> LightningCLI (jsonargparse) requires every `key=value` override to be passed as
+> an option, i.e. prefixed with `--`. A bare `data.init_args.root_dir=...` is
+> rejected with `error: unrecognized arguments`. Both `--key=value` and
+> `--key value` are accepted.
 
 `${{inputs.splits}}` is an Azure ML expression that resolves to the mounted datastore path only inside the AML run; locally it would be an invalid path, so the committed default stays `data/splits/`.
 
@@ -422,11 +427,11 @@ command: >-
   python -m twitter.main
     --config configs/tasks/classification.yaml
     --config configs/encoders/sentence_bert_base.yaml
-    data.init_args.root_dir=${{inputs.splits}}
-    trainer.logger.class_path=lightning.pytorch.loggers.MLFlowLogger
-    trainer.logger.init_args.experiment_name=twitter-clf
-    trainer.logger.init_args.tracking_uri=${{env.MLFLOW_TRACKING_URI}}
-    trainer.max_epochs=10
+    --data.init_args.root_dir=${{inputs.splits}}
+    --trainer.logger.class_path=lightning.pytorch.loggers.MLFlowLogger
+    --trainer.logger.init_args.experiment_name=twitter-clf
+    --trainer.logger.init_args.tracking_uri=${{env.MLFLOW_TRACKING_URI}}
+    --trainer.max_epochs=10
 code: .  # uploaded from local
 inputs:
   splits:
@@ -498,8 +503,8 @@ Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod 
    python -m twitter.main fit \
      --config configs/tasks/classification.yaml \
      --config configs/encoders/bertweet_large.yaml \
-     data.init_args.root_dir=./data/splits \
-     trainer.max_epochs=10
+     --data.init_args.root_dir=./data/splits \
+     --trainer.max_epochs=10
    ```
 
    Params/metrics/artifacts land in the Azure-managed MLflow. The run's best checkpoint is registered as `twitter-clf-bertweet-large` (task + encoder derived); register a different name manually with `mlflow.register_model("runs:/<run_id>/registered_model", "name")` if needed.
