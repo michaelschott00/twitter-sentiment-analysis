@@ -138,6 +138,10 @@ class _BaseModule(pl.LightningModule):
     def _is_mlflow_logger(self):
         return self.logger is not None and type(self.logger).__name__ == "MLFlowLogger"
 
+    def _next_artifact_index(self):
+        self._artifact_index = getattr(self, "_artifact_index", 0) + 1
+        return self._artifact_index
+
     def _log_text(self, tag, text, step):
         if (
             self.logger is None
@@ -151,8 +155,15 @@ class _BaseModule(pl.LightningModule):
             # fluent `mlflow.log_*` helpers would therefore start an orphan run
             # in the default experiment, leaving the real run without these
             # artifacts. Log through the logger's client instead.
+            #
+            # The (tag, step) pair is not unique across a run: validation runs
+            # every epoch and sanity validation also reports epoch 0, so the
+            # same path would be uploaded twice. Azure ML rejects a duplicate
+            # artifact path with a "Resource Conflict" UserError, so append a
+            # monotonically increasing index to keep every path unique.
             with tempfile.TemporaryDirectory() as tmp:
-                path = os.path.join(tmp, f"{step}.txt")
+                index = self._next_artifact_index()
+                path = os.path.join(tmp, f"{step}_{index}.txt")
                 with open(path, "w") as fh:
                     fh.write(text)
                 self.logger.experiment.log_artifact(
@@ -170,7 +181,8 @@ class _BaseModule(pl.LightningModule):
             return
         if self._is_mlflow_logger():
             with tempfile.TemporaryDirectory() as tmp:
-                path = os.path.join(tmp, f"{tag.replace('/', '_')}.png")
+                index = self._next_artifact_index()
+                path = os.path.join(tmp, f"{tag.replace('/', '_')}_{index}.png")
                 fig.savefig(path)
                 self.logger.experiment.log_artifact(self.logger.run_id, path)
         else:
@@ -231,8 +243,11 @@ class _BaseModule(pl.LightningModule):
             print(f"Model registration failed (run still logged): {e}")
 
     def on_train_batch_start(self, batch, batch_idx):
-        # Log some texts from the first input batch
-        if self.current_epoch == 0 and batch_idx == 0:
+        # Log some texts from the first input batch (once per run).
+        if not getattr(self, "_logged_input_samples", None):
+            self._logged_input_samples = set()
+        if "training" not in self._logged_input_samples:
+            self._logged_input_samples.add("training")
             self.log_batch(batch, 5, "training")
 
     def on_train_epoch_end(self):
@@ -245,8 +260,14 @@ class _BaseModule(pl.LightningModule):
             self.encoder.freeze(layers=unfreeze_cfg[self.current_epoch], unfreeze=True)
 
     def on_validation_batch_start(self, batch, batch_idx):
-        # Log some texts from the first input batch
-        if self.current_epoch == 0 and batch_idx == 0:
+        # Log some texts from the first input batch. Sanity validation also
+        # reports epoch 0, so keying on (current_epoch, batch_idx) alone would
+        # try to re-upload the same artifact path and Azure ML rejects the
+        # duplicate. Log once per stage per run instead.
+        if not getattr(self, "_logged_input_samples", None):
+            self._logged_input_samples = set()
+        if "validation" not in self._logged_input_samples:
+            self._logged_input_samples.add("validation")
             self.log_batch(batch, 5, "validation")
 
     def log_batch(self, batch, n, stage: str):

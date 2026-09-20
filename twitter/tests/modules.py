@@ -657,7 +657,7 @@ class MLflowLoggerTests(unittest.TestCase):
     guard for the RunPod/Azure MLflow path.
     """
 
-    def _fit(self, uri, batch_fn=clf_batch):
+    def _fit(self, uri, batch_fn=clf_batch, max_epochs=1):
         from lightning.pytorch.loggers import MLFlowLogger
 
         logger = MLFlowLogger(
@@ -668,7 +668,7 @@ class MLflowLoggerTests(unittest.TestCase):
         )
         trainer = _cpu_trainer(
             logger=logger,
-            max_epochs=1,
+            max_epochs=max_epochs,
             limit_train_batches=1,
             limit_val_batches=1,
             num_sanity_val_steps=0,
@@ -684,9 +684,33 @@ class MLflowLoggerTests(unittest.TestCase):
             run = client.get_run(logger.run_id)
             self.assertIn("loss/validation", run.data.metrics)
             artifacts = {a.path for a in client.list_artifacts(logger.run_id)}
-            self.assertIn("Confusion Matrix_validation.png", artifacts)
+            # Artifact paths carry a per-call index so repeated logging
+            # (epoch 0 + sanity validation) cannot collide on Azure ML.
+            self.assertTrue(
+                any(
+                    a.startswith("Confusion Matrix_validation") and a.endswith(".png")
+                    for a in artifacts
+                ),
+                artifacts,
+            )
             self.assertIn("Input_training", artifacts)
             self.assertIn("Input_validation", artifacts)
+
+    def test_repeated_logging_uses_unique_artifact_paths(self):
+        """Repeated validation epochs must not reuse one MLflow artifact path.
+
+        Azure ML rejects a duplicate artifact path with a "Resource Conflict"
+        UserError, which killed the first Azure-logged run at validation time.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            logger = self._fit("file:" + os.path.join(d, "mlruns"), max_epochs=2)
+            paths = {
+                f.path
+                for f in logger.experiment.list_artifacts(logger.run_id)
+                if f.path.startswith("Confusion Matrix_validation")
+            }
+            # One figure per validation epoch, all with distinct paths.
+            self.assertGreaterEqual(len(paths), 2, paths)
 
     def test_input_samples_logged_for_mapping_batches(self):
         """The real collate yields BatchEncoding (Mapping, not dict)."""
