@@ -1,7 +1,6 @@
 ---
 date: 2026-09-01
 ---
-
 # Improving the project
 
 - Where possible, delegate the work to subagents

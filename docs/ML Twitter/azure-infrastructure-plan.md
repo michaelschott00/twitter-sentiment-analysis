@@ -11,12 +11,12 @@ The project is originally a ML competition codebase (Twitter sentiment classific
 
 **Hard requirements:**
 
-| ID | Requirement                   | Success Criteria                                                                                                                                                 |
-| -- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1 | Store dataset in Azure        | Raw + splits in versioned Azure Storage, registered as Azure ML Data Assets, reproducible `TwitterDataModule(root_dir=...)` without local `data/`                |
-| R2 | Train & store models on Azure | CPU jobs (`lightgbm`, data validation) run as AML Command Jobs on Azure ML dedicated CPU compute; GPU jobs (transformer fine-tune) run on RunPod and log/register to the Azure ML workspace + MLflow. Checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud    |
-| R3 | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). integrate `lightning.pytorch.loggers.MLFlowLogger`                           |
-| R4 | Inference endpoint (explore)  | Deploy one registered model to a Managed Online Endpoint (non-prod, 0/1 instance, key auth) with `score.py` that wraps `AutoTokenizer` + `TransformerClassifier` |
+| ID  | Requirement                   | Success Criteria                                                                                                                                                                                                                                                                   |
+| --- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | Store dataset in Azure        | Raw + splits in versioned Azure Storage, registered as Azure ML Data Assets, reproducible `TwitterDataModule(root_dir=...)` without local `data/`                                                                                                                                  |
+| R2  | Train & store models on Azure | CPU jobs (`lightgbm`, data validation) run as AML Command Jobs on Azure ML dedicated CPU compute; GPU jobs (transformer fine-tune) run on RunPod and log/register to the Azure ML workspace + MLflow. Checkpoints valued via `Monitor: MulticlassF1Score / MSE` persisted to cloud |
+| R3  | Use MLflow                    | Every training run logged via MLflow (params, metrics, artifacts, model signature). integrate `lightning.pytorch.loggers.MLFlowLogger`                                                                                                                                             |
+| R4  | Inference endpoint (explore)  | Deploy one registered model to a Managed Online Endpoint (non-prod, 0/1 instance, key auth) with `score.py` that wraps `AutoTokenizer` + `TransformerClassifier`                                                                                                                   |
 
 **Constraints:**
 
