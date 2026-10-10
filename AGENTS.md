@@ -5,8 +5,8 @@
 - `pyproject.toml` is the single source of truth for dependencies (core + `torch`/`lgbm`/`llm`/`dev` extras); add any new dependency there instead of a requirements file. The dev image installs the project into a venv at `/opt/venv` (first on `PATH`), so use `pip`/`python`/`pytest` directly — no `--break-system-packages` is needed (that only applies to the bare system interpreter). Tools whose pinned deps clash with the project env get their own venv (e.g. `/opt/azcli` for azure-cli, to protect `omegaconf`'s antlr pin).
 - `pytest` is used for unit testing and `ruff` for formatting. Type hints aren't important unless they indicate errors or bad design decisions.
 - Scripts with `click` based CLI are always preferred over jupyter notebooks.
-- Git pushes should go to the `dev` branch of the `origin-http` remote.
-- A push to the `dev` branch triggers:
+- Git pushes should go to the `main` branch of the `origin-http` remote.
+- A push to the `main` branch triggers:
   - a build and push to docker hub of the runpod docker image if it or any of its dependencies have changed.
   - terraform hcp to create a plan. Any terraform changes have to be approved and applied by a human. It may take a while until a human is available to do this. Changes unrelated to terraform trigger a plan but don't require human approval.
 - Git worktrees should be created under `/home/agent/worktrees`, which is a dedicated docker volume.

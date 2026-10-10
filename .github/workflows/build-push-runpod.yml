@@ -3,7 +3,7 @@ name: Build and push RunPod image
 on:
   push:
     branches:
-      - dev
+      - main
     paths:
       - "infra/environments/runpod/Dockerfile"
       - "pyproject.toml"
