@@ -124,6 +124,11 @@ tools:
     creds: [MLFLOW_TRACKING_URI, AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
     base_argv: [mlflow, experiments]
 
+  - name: mlflow_inspect
+    description: Inspect MLflow experiments, runs and metric history.
+    creds: [MLFLOW_TRACKING_URI, AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
+    base_argv: [python, -I, /opt/tools/mlflow_inspect.py]
+
   # azcopy
 
   - name: azcopy_copy

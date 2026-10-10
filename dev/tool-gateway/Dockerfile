@@ -54,6 +54,14 @@ RUN curl -fsSL -o /usr/local/bin/runpodctl \
       https://github.com/runpod/runpodctl/releases/download/v${RUNPODCTL_VERSION}/runpodctl-linux-amd64 \
     && chmod 755 /usr/local/bin/runpodctl
 
+# Bake the MLflow inspection CLI into the image. It must NOT be executed from
+# the agent-writable /workspace (via `python -m twitter.mlflow_inspect`): the
+# agent shares that volume and could rewrite the module to run arbitrary code
+# with this tool's creds. Running the copied script instead puts the image's
+# /opt/tools (not /workspace/cwd) on sys.path; -I additionally ignores
+# PYTHON* env and user site-packages.
+COPY twitter/mlflow_inspect.py /opt/tools/mlflow_inspect.py
+
 RUN useradd -m -u 1000 agent && mkdir -p /home/agent/.cache/pip && chown -R agent:agent /home/agent /workspace
 USER agent
 
