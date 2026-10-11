@@ -43,6 +43,11 @@ tools:
     creds: [GH_TOKEN]
     base_argv: [git, push]
 
+  - name: git_fetch
+    description: Git fetch from GitHub remote.
+    creds: [GH_TOKEN]
+    base_argv: [git, fetch]
+
   # Azure ML
 
   - name: azml_job_submit
