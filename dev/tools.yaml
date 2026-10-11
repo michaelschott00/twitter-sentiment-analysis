@@ -189,5 +189,5 @@ tools:
       (detach, leaves a cluster) or `sky jobs launch` (managed), then poll
       with `sky status`/`sky jobs queue`. SkyPilot's local state lives in
       ~/.sky (persisted volume).
-    creds: [RUNPOD_API_KEY]
+    creds: [RUNPOD_API_KEY, GIT_TOKEN, MLFLOW_TRACKING_URI, AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
     base_argv: [sky]

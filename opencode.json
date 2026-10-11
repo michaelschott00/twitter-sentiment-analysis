@@ -5,7 +5,8 @@
       "type": "remote",
       "url": "http://tool-gateway:8004/mcp",
       "enabled": true,
-      "oauth": false
+      "oauth": false,
+      "timeout": 43200000
     },
     "drawio": {
       "type": "local",
