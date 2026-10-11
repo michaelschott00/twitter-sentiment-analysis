@@ -130,7 +130,7 @@ tools:
     base_argv: [mlflow, experiments]
 
   - name: mlflow_inspect
-    description: Inspect MLflow experiments, runs and metric history.
+    description: Inspect and clean up MLflow experiments, runs and metric history (set-status to terminate a zombie run, delete-run to soft-delete it).
     creds: [MLFLOW_TRACKING_URI, AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
     base_argv: [python, -I, /opt/tools/mlflow_inspect.py]
 

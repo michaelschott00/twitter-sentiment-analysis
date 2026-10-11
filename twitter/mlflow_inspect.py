@@ -6,6 +6,8 @@ Usage:
     python -m twitter.mlflow_inspect list-metrics --run <run_id>
     python -m twitter.mlflow_inspect history --run <run_id>
     python -m twitter.mlflow_inspect history --run <run_id> --metric MulticlassF1Score
+    python -m twitter.mlflow_inspect set-status --run <run_id> --status KILLED
+    python -m twitter.mlflow_inspect delete-run --run <run_id>
 """
 
 from __future__ import annotations
@@ -66,7 +68,7 @@ def _run_name(run) -> str:
     help="MLflow tracking URI (default: $MLFLOW_TRACKING_URI or ./mlruns).",
 )
 def cli(tracking_uri: str | None) -> None:
-    """Inspect MLflow experiments, runs and metric history."""
+    """Inspect and clean up MLflow experiments, runs and metric history."""
     _setup_tracking(tracking_uri)
 
 
@@ -90,7 +92,12 @@ def list_experiments() -> None:
 
 @cli.command("list-runs")
 @click.option("--experiment", required=True, help="Experiment name or id.")
-def list_runs(experiment: str) -> None:
+@click.option(
+    "--include-deleted",
+    is_flag=True,
+    help="Include soft-deleted runs (Azure ML's backend ignores the active-only view).",
+)
+def list_runs(experiment: str, include_deleted: bool) -> None:
     """List runs for an experiment."""
     import mlflow
 
@@ -100,6 +107,10 @@ def list_runs(experiment: str) -> None:
         output_format="list",
         order_by=["attributes.start_time DESC"],
     )
+    # Azure ML's MLflow backend returns soft-deleted runs even for the default
+    # ACTIVE_ONLY view, so filter client-side to keep cleaned-up runs hidden.
+    if not include_deleted:
+        runs = [r for r in runs if r.info.lifecycle_stage == "active"]
     if not runs:
         click.echo("No runs found.")
         return
@@ -181,6 +192,42 @@ def history(run_id: str, metric: str | None, experiment: str | None) -> None:
             click.echo(
                 f"{point.step:>8}  {point.value:>18.6g}  {_fmt_time(point.timestamp)}"
             )
+
+
+@cli.command("set-status")
+@click.option("--run", "run_id", required=True, help="Run id.")
+@click.option(
+    "--status",
+    required=True,
+    type=click.Choice(
+        ["RUNNING", "SCHEDULED", "FINISHED", "FAILED", "KILLED"], case_sensitive=False
+    ),
+    help="New status for the run.",
+)
+def set_status(run_id: str, status: str) -> None:
+    """Terminate a run with an explicit status.
+
+    Used to clean up "zombie" runs left RUNNING after their pod was stopped
+    externally (e.g. the RunPod restart-loop duplicate), which MLflow never
+    terminates on its own.
+    """
+    import mlflow
+
+    _get_run(run_id)
+    status = status.upper()
+    mlflow.tracking.MlflowClient().set_terminated(run_id, status=status)
+    click.echo(f"{run_id}: status set to {status}")
+
+
+@cli.command("delete-run")
+@click.option("--run", "run_id", required=True, help="Run id.")
+def delete_run(run_id: str) -> None:
+    """Soft-delete a run (recoverable in the MLflow UI via "Deleted" filter)."""
+    import mlflow
+
+    _get_run(run_id)
+    mlflow.tracking.MlflowClient().delete_run(run_id)
+    click.echo(f"{run_id}: deleted")
 
 
 if __name__ == "__main__":
