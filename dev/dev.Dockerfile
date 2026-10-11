@@ -162,5 +162,16 @@ RUN az extension add --name ml --version ${ML_EXTENSION_VERSION} --yes
 # a build hang if it does not.
 RUN timeout 120 npx -y @drawio/mcp </dev/null >/dev/null 2>&1 || true
 
+# Install the SkyPilot agent skill (upstream generic steps, agent/INSTALL.md).
+# opencode auto-loads external skills from ~/.agents/skills/, so the clone goes
+# to ~/.agents/.skypilot and the skill is symlinked into ~/.agents/skills (the
+# upstream doc's `.skills` path is inconsistent with its own verify step). The
+# clone is not a mounted volume and is refreshed at runtime with `git pull`;
+# skills update instantly through the symlink.
+RUN mkdir -p $HOME/.agents \
+    && git clone --depth 1 https://github.com/skypilot-org/skypilot.git $HOME/.agents/.skypilot \
+    && mkdir -p $HOME/.agents/skills \
+    && ln -s $HOME/.agents/.skypilot/agent/skills/skypilot $HOME/.agents/skills/skypilot
+
 # Override python entrypoint
 ENTRYPOINT ["/bin/bash"]
