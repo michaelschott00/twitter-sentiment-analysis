@@ -3,7 +3,7 @@ name: Build and push RunPod image
 on:
   push:
     branches:
-      - main
+      - skypilot
     paths:
       # Dependency/image inputs only. Source edits (twitter/**, configs/**)
       # intentionally do NOT rebuild: the pod clones the repo at start.
