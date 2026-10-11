@@ -123,11 +123,6 @@ def test_unlisted_flag_is_passthrough(monkeypatch):
 
 
 def test_shell_meta_rejected_globally():
-    out = server_mod.call_tool(
-        "runpodctl_pod_create",
-        argv=["runpodctl", "pod", "create", "--name", "x; rm -rf /"],
-    )
-    assert "returncode: 1" in out and "shell metacharacters" in out
     out = server_mod.call_tool("gh_pr", argv=["gh", "pr", "list; evil"])
     assert "returncode: 1" in out and "shell metacharacters" in out
 
@@ -284,50 +279,6 @@ def test_show_help_skips_az_login(monkeypatch):
     assert m.call_count == 1  # no account show / login
 
 
-def test_runpodctl_forwards_valid_options():
-    with patch.object(server_mod.subprocess, "run") as m:
-        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-        server_mod.call_tool(
-            "runpodctl_pod_create",
-            argv=["runpodctl", "pod", "create", "--name", "mypod"],
-        )
-    assert m.call_args[0][0][:3] == ["runpodctl", "pod", "create"]
-
-
-def test_template_image_passthrough():
-    with patch.object(server_mod.subprocess, "run") as m:
-        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-        out = server_mod.call_tool(
-            "runpodctl_template_create",
-            argv=[
-                "runpodctl",
-                "template",
-                "create",
-                "--name",
-                "t",
-                "--image",
-                "michaelschott00/twitter-sentiment:dev",
-            ],
-        )
-    assert "returncode: 0" in out
-    assert "michaelschott00/twitter-sentiment:dev" in m.call_args[0][0]
-
-
-def test_template_image_eq_form_preserved():
-    with patch.object(server_mod.subprocess, "run") as m:
-        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-        server_mod.call_tool(
-            "runpodctl_template_create",
-            argv=[
-                "runpodctl",
-                "template",
-                "create",
-                "--image=runpod/pytorch:2.1.0",
-            ],
-        )
-    assert "--image=runpod/pytorch:2.1.0" in m.call_args[0][0]
-
-
 def test_unmarked_slash_value_passthrough():
     with patch.object(server_mod.subprocess, "run") as m:
         m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
@@ -444,3 +395,30 @@ def test_canary_never_leaks(monkeypatch, tmp_ws):
         out = server_mod.call_tool("gh_pr", argv=["gh", "pr", "list"])
     assert canary not in out
     assert "GH_TOKEN" in out
+
+
+# --- SkyPilot ----------------------------------------------------------------
+
+
+def test_sky_forwards_argv():
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        out = server_mod.call_tool("sky", argv=["sky", "check", "runpod"])
+    assert "returncode: 0" in out
+    assert m.call_args[0][0][:3] == ["sky", "check", "runpod"]
+
+
+def test_sky_prefix_enforced():
+    out = server_mod.call_tool("sky", argv=["runpodctl", "pod", "list"])
+    assert "returncode: 1" in out and "must start with" in out
+
+
+def test_sky_env_scoped_to_runpod_only(monkeypatch):
+    _set_broker_secrets(monkeypatch, GH_TOKEN="gh-secret", RUNPOD_API_KEY="rp-secret")
+    monkeypatch.setattr(server_mod, "broker", broker_mod.Broker())
+    with patch.object(server_mod.subprocess, "run") as m:
+        m.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        server_mod.call_tool("sky", argv=["sky", "status"])
+    env = m.call_args.kwargs["env"]
+    assert env["RUNPOD_API_KEY"] == "rp-secret"
+    assert "GH_TOKEN" not in env

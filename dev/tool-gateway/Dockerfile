@@ -15,9 +15,14 @@ ARG ML_EXTENSION_VERSION=2.44.1
 ARG GH_VERSION=2.101.0
 ARG AZCOPY_VERSION=10.32.7
 ARG RUNPODCTL_VERSION=2.14.0
+ARG SKYPILOT_VERSION=0.14.0
 
+# rsync + openssh-client are required by SkyPilot's launch/exec path: its
+# command runner shells out to the `rsync` and `ssh` binaries to sync workdirs
+# and run remote commands.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates bash less \
+    && apt-get install -y --no-install-recommends \
+         curl ca-certificates bash less rsync openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Azure CLI (pinned) + ML extension + mlflow.
@@ -54,6 +59,20 @@ RUN curl -fsSL -o /usr/local/bin/runpodctl \
       https://github.com/runpod/runpodctl/releases/download/v${RUNPODCTL_VERSION}/runpodctl-linux-amd64 \
     && chmod 755 /usr/local/bin/runpodctl
 
+# SkyPilot in its own venv, mirroring the /opt/azcli isolation in
+# dev/dev.Dockerfile: its dependency surface is large (the runpod extra pulls
+# the runpod SDK, fastapi, opentelemetry, boto3, ...) and must not perturb the
+# pinned azure-cli/mlflow stack installed above. Only the `sky` entrypoint is
+# exposed on PATH (never the venv's bin dir, so its `python` cannot shadow the
+# project's). The agent reaches it through the `sky` tool in dev/tools.yaml, so
+# RunPod credentials stay in this container. The import is a build-time gate
+# that the dependency stack resolved cleanly.
+RUN --mount=type=cache,id=pip-gw,target=/home/agent/.cache/pip,sharing=locked \
+    /usr/local/bin/python -m venv /opt/sky \
+    && /opt/sky/bin/pip install "skypilot[runpod]==${SKYPILOT_VERSION}" \
+    && ln -s /opt/sky/bin/sky /usr/local/bin/sky \
+    && /opt/sky/bin/python -c "import sky; print('skypilot', sky.__version__)"
+
 # Bake the MLflow inspection CLI into the image. It must NOT be executed from
 # the agent-writable /workspace (via `python -m twitter.mlflow_inspect`): the
 # agent shares that volume and could rewrite the module to run arbitrary code
@@ -62,7 +81,9 @@ RUN curl -fsSL -o /usr/local/bin/runpodctl \
 # PYTHON* env and user site-packages.
 COPY twitter/mlflow_inspect.py /opt/tools/mlflow_inspect.py
 
-RUN useradd -m -u 1000 agent && mkdir -p /home/agent/.cache/pip && chown -R agent:agent /home/agent /workspace
+RUN useradd -m -u 1000 agent \
+    && mkdir -p /home/agent/.cache/pip /home/agent/.sky /home/agent/.runpod \
+    && chown -R agent:agent /home/agent /workspace /opt/sky
 USER agent
 
 # Install the Azure ML extension (as the runtime user, so `az ml` is found)

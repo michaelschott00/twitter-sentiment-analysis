@@ -27,6 +27,15 @@ services:
       dockerfile: dev/tool-gateway/Dockerfile
     volumes:
       - .:/workspace
+      # SkyPilot's RunPod cloud (and the runpod SDK it drives) read the API key
+      # from ~/.runpod/config.toml, not from RUNPOD_API_KEY. Mount the host file
+      # read-only at that exact path. The file must exist before
+      # `docker compose up` (Docker would otherwise create it as a directory)
+      # and be readable by uid 1000 (the gateway's agent user).
+      - ../.runpod/config.toml:/home/agent/.runpod/config.toml:ro
+      # Persist SkyPilot's client/server state (clusters, managed jobs) across
+      # gateway restarts, so tracked RunPod pods are not orphaned.
+      - sky-state:/home/agent/.sky
     ports:
       - 8004:8004
     env_file:
@@ -39,3 +48,4 @@ services:
 
 volumes:
   worktrees:
+  sky-state:
