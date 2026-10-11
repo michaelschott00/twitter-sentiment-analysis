@@ -61,12 +61,11 @@ sky check runpod
 
 ## Operational notes
 
-- Each call is bounded by the gateway timeout (`TOOL_TIMEOUT_S`, default 120s,
-  configurable in `compose.yaml`), and the gateway is non-interactive. For long
-  work prefer non-streaming modes: `sky launch -d` (detach, leaves a cluster)
-  or `sky jobs launch` (managed lifecycle), then poll with `sky status` /
-  `sky jobs queue`. Pass `-y/--yes` to commands that would otherwise prompt for
-  confirmation (e.g. `sky down`).
+- Calls are not bounded by a gateway timeout (the gateway is non-interactive,
+  though). For long-lived work prefer non-streaming modes: `sky launch -d`
+  (detach, leaves a cluster) or `sky jobs launch` (managed lifecycle), then
+  poll with `sky status` / `sky jobs queue`. Pass `-y/--yes` to commands that
+  would otherwise prompt for confirmation (e.g. `sky down`).
 - SkyPilot auto-starts a local API server on first use; state persists in the
   `sky-state` volume.
 - Enabling additional providers later means adding their credentials to the

@@ -184,9 +184,10 @@ tools:
       enabled) so availability problems can be routed around. Runs in this
       gateway, so credentials never reach the agent container; the RunPod API
       key is bind-mounted read-only at ~/.runpod/config.toml (see compose.yaml).
-      Each call is bounded by the gateway timeout, so prefer non-streaming
-      modes for long work: `sky launch -d` (detach, leaves a cluster) or
-      `sky jobs launch` (managed), then poll with `sky status`/`sky jobs
-      queue`. SkyPilot's local state lives in ~/.sky (persisted volume).
+      Calls are not bounded by a timeout, so streaming modes are fine. For
+      long-lived work prefer non-streaming modes anyway: `sky launch -d`
+      (detach, leaves a cluster) or `sky jobs launch` (managed), then poll
+      with `sky status`/`sky jobs queue`. SkyPilot's local state lives in
+      ~/.sky (persisted volume).
     creds: [RUNPOD_API_KEY]
     base_argv: [sky]

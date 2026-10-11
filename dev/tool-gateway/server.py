@@ -64,7 +64,6 @@ AUDIT_LOG = Path(os.environ.get("AUDIT_LOG", LOG_DIR / "tool-gateway-audit.jsonl
 AZ_LOGIN_LOG = Path(
     os.environ.get("AZ_LOGIN_LOG", LOG_DIR / "tool-gateway-azure-login.jsonl")
 )
-TIMEOUT_S = int(os.environ.get("TOOL_TIMEOUT_S", "120"))
 MAX_OUTPUT = int(os.environ.get("TOOL_MAX_OUTPUT", "262144"))
 
 SHELL_META = re.compile("[;|&$`!\n\r]")
@@ -257,7 +256,6 @@ def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
             env=env,
             capture_output=True,
             text=True,
-            timeout=TIMEOUT_S,
             check=False,
         )
         combined = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
@@ -268,11 +266,6 @@ def _run_cfg(cfg: dict, argv: list[str], skip_az_login: bool = False) -> str:
         _audit(tool_name, argv, proc.returncode, redacted, hits, _creds_env(cfg, env))
         prefix = f"returncode: {proc.returncode}\n"
         return prefix + redacted
-    except subprocess.TimeoutExpired as e:
-        partial = (e.output or "") if isinstance(e.output, str) else ""
-        redacted, hits = redact(partial, broker.secret_values())
-        _audit(tool_name, argv, 124, redacted, hits, _creds_env(cfg, env))
-        return f"returncode: 124\ntimeout after {TIMEOUT_S}s\n{redacted}"
     except FileNotFoundError:
         return f"returncode: 127\nerror: executable not found: {argv[0]}"
     except Exception as e:  # noqa: BLE001 - return errors as tool output
