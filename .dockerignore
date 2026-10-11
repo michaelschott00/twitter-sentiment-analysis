@@ -1,0 +1,16 @@
+# Keep the build context tiny — only pyproject.toml and
+# infra/environments/runpod/{run.sh,fetch_splits.py} are COPYed.
+.git
+.github
+.opencode
+**/.terraform
+data/
+results/
+references/
+images/
+docs/
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.rumdl_cache/

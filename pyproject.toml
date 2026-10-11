@@ -50,6 +50,12 @@ torch = [
     "mlflow==2.16.2",
     "azureml-mlflow==1.62.0.post6",
     "azure-identity==1.25.3",
+    # The RunPod pod bootstrap fetches the twitter-splits data asset with the
+    # SDK (infra/environments/runpod/fetch_splits.py) instead of azure-cli, so
+    # the image no longer needs the whole CLI (and its antlr4/omegaconf pin
+    # conflict). azure-storage-blob also arrives transitively via azureml-mlflow.
+    "azure-ai-ml==1.35.0",
+    "azure-storage-blob==12.27.1",
 ]
 # CPU LightGBM baseline (Azure ML).
 lgbm = [

@@ -483,7 +483,7 @@ ml_client.jobs.stream(job.name)
 Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod but remains fully tracked in the Azure ML workspace / MLflow.
 
 1. **Prereqs (Terraform, §10):** `runpod-mlflow-sp` service principal exists with `AzureML Data Scientist` on the workspace + `Storage Blob Data Contributor` on the storage account. Secret stored in Key Vault.
-2. **Start pod:** GPU pod from the `twitter-sentiment-gpu` RunPod template (image `michaelschott00/twitter-sentiment:dev`, built from `infra/environments/runpod/Dockerfile`). The template injects all credentials as env vars from RunPod secrets, so no manual export is needed:
+2. **Start pod:** GPU pod from the `twitter-sentiment-gpu` RunPod template (image `michaelschott00/twitter-sentiment:dev`, built from `infra/environments/runpod/Dockerfile`). The image ships **dependencies only**; `run.sh` clones the repo onto the pod at start, so source changes (`twitter/**`, `configs/**`) never require an image rebuild — only a `pyproject.toml` change does. The template injects all credentials as env vars from RunPod secrets, so no manual export is needed:
 
    | Env var                 | RunPod secret                     | Value                              |
    | ----------------------- | --------------------------------- | ---------------------------------- |
@@ -494,9 +494,12 @@ Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod 
    | `MLFLOW_TRACKING_URI`   | `RUNPOD_SECRET_MLFLOW_TRACKING_URI`| `terraform output mlflow_tracking_uri` |
    | `AZURE_RESOURCE_GROUP`  | (template literal)                 | `rg-twitter-ml`                     |
    | `AZUREML_WORKSPACE`     | (template literal)                 | `mlw-twitter-sentiment`             |
+   | `REPO_REF`              | (optional)                         | git ref to clone (default `main`)   |
+   | `REPO_URL`              | (optional)                         | repo URL (default project repo)     |
+   | `GITHUB_TOKEN`          | `RUNPOD_SECRET_GITHUB_TOKEN`       | only needed if the repo is private  |
 
-   `MLFLOW_TRACKING_URI` = `azureml://westeurope.api.azureml.ms/mlflow/v1.0/<workspace-id>`; `DefaultAzureCredential` picks up the SP automatically, so no code change is needed in `twitter/` or the MLflow setup.
-3. **Fetch data:** download `twitter-splits` via the AML SDK / `azcopy` authenticated as the SP (same `Storage Blob Data Contributor` role), or `mlflow` artifact download. Keep the same `data.init_args.root_dir=<local pod path>` override pattern as §5.2.
+   `MLFLOW_TRACKING_URI` = `azureml://westeurope.api.azureml.ms/mlflow/v1.0/<workspace-id>`; `DefaultAzureCredential` picks up the SP automatically, so no code change is needed in `twitter/` or the MLflow setup. After cloning, `run.sh` runs a source-level import gate (`import twitter.data, twitter.models, twitter.modules, twitter.main`) so a broken clone fails before any data is fetched or GPU time is spent.
+3. **Fetch data:** `run.sh` downloads `twitter-splits` with `infra/environments/runpod/fetch_splits.py`, which resolves the datastore via the Azure ML SDK (`MLClient`) and pulls the blobs with `azure-storage-blob`, authenticated as the SP (same `Storage Blob Data Contributor` role). No azure-cli is needed on the pod. Keep the same `data.init_args.root_dir=<local pod path>` override pattern as §5.2.
 4. **Run training — identical command, identical MLflow logger:**
 
    ```bash
