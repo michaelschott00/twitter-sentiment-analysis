@@ -482,6 +482,14 @@ ml_client.jobs.stream(job.name)
 
 Azure has no GPU quota, so all transformer fine-tuning runs on a RunPod GPU pod but remains fully tracked in the Azure ML workspace / MLflow.
 
+> **On the `skypilot` branch, this §7.4 workflow (RunPod template + `run.sh`)
+> is superseded by SkyPilot**: the image is dependencies-only with no
+> entrypoint, `run.sh`/the `twitter-sentiment-gpu` template are gone, and
+> `infra/skypilot/train-clf.yaml` launches the pod with a cloned `workdir`,
+> downloads the splits in `setup`, and runs the same training command — see
+> `docs/ML Twitter/Skypilot.md`. The rest of this section documents the data /
+> credentials that still apply.
+
 1. **Prereqs (Terraform, §10):** `runpod-mlflow-sp` service principal exists with `AzureML Data Scientist` on the workspace + `Storage Blob Data Contributor` on the storage account. Secret stored in Key Vault.
 2. **Start pod:** GPU pod from the `twitter-sentiment-gpu` RunPod template (image `michaelschott00/twitter-sentiment:main`, built from `infra/environments/runpod/Dockerfile`). The image ships **dependencies only**; `run.sh` clones the repo onto the pod at start, so source changes (`twitter/**`, `configs/**`) never require an image rebuild — only a `pyproject.toml` change does. The template injects all credentials as env vars from RunPod secrets, so no manual export is needed:
 

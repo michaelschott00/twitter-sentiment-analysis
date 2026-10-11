@@ -6,10 +6,11 @@
 # up layered on a cu129 torch stack and the CUDA ABIs clash at import.
 #
 # This image ships *dependencies only*; the sources (twitter/, configs/) are
-# cloned onto the pod at start by run.sh. That keeps the expensive dependency
-# layer keyed on pyproject.toml alone, so a source edit never rebuilds it.
+# cloned onto the pod by SkyPilot's git `workdir`. That keeps the expensive
+# dependency layer keyed on pyproject.toml alone, so a source edit never
+# rebuilds it.
 #
-# Build context: repo root (run.sh/fetch_splits.py live under
+# Build context: repo root (fetch_splits.py lives under
 # infra/environments/runpod/). uv is preinstalled in the base image.
 FROM runpod/base:1.3.1-cuda1281-ubuntu2404
 
@@ -23,7 +24,7 @@ ENV AZUREML_ARTIFACTS_DEFAULT_TIMEOUT=900
 
 # Dependencies live in a uv-managed venv, kept OFF the default PATH so the
 # base image's Jupyter/SSH (/start.sh) keep using the system interpreter;
-# run.sh calls /opt/venv/bin/python explicitly.
+# the SkyPilot `setup`/`run` steps call /opt/venv/bin/python explicitly.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV UV_PYTHON_DOWNLOADS=never
 ENV UV_LINK_MODE=copy
@@ -38,22 +39,22 @@ RUN --mount=type=cache,target=/workspace/.cache/uv \
     uv sync --no-install-project --extra torch --directory /tmp/build \
     && rm -rf /tmp/build
 
-# Build-time gate: fail the image build (not a GPU pod at $0.50+/hr) if the
-# dependency stack is broken — torch/CUDA ABI drift and omegaconf's antlr pin
-# both surface here. The cloned `twitter.*` import chain is checked at runtime
-# by run.sh instead, since the sources are not in the image.
+# Bit of a sanity check: fail the image build (not a GPU pod at $0.50+/hr) if
+# the dependency stack is broken. The cloned `twitter.*` import chain is
+# exercised by the training command itself.
 RUN /opt/venv/bin/python -c "import torch, lightning, transformers, torchmetrics, jsonargparse, omegaconf, mlflow, azure.ai.ml; print('training deps ok')"
 
-# Pod bootstrap: clones the repo and runs the requested LightningCLI command
-# (defaults to `python -m twitter.main --help`), downloading the twitter-splits
-# data asset first. See the script header for the full contract.
-COPY ./infra/environments/runpod/run.sh /usr/local/bin/run.sh
+# fetch_splits.py downloads the twitter-splits data asset; SkyPilot's `setup`
+# step invokes it before training (see infra/skypilot/train-clf.yaml). The repo
+# sources (twitter/, configs/) are cloned by SkyPilot's git `workdir` and never
+# baked into the image, so they can change without a rebuild.
 COPY ./infra/environments/runpod/fetch_splits.py /usr/local/bin/fetch_splits.py
-RUN chmod +x /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/fetch_splits.py
 
 WORKDIR /project
 
-# No CMD: with no docker args, run.sh runs `python -m twitter.main --help`
-# (AUTO_STOP=0) instead of a CMD, which the entrypoint would have prepended a
-# second `python -m twitter.main` to.
-ENTRYPOINT ["/usr/local/bin/run.sh"]
+# No ENTRYPOINT: SkyPilot boots the pod by passing its own start command, so an
+# image entrypoint hijacks (and exits on) it. The inherited runpod/base
+# /start.sh tolerates that bootstrap. `sleep infinity` keeps a bare pod alive
+# for debugging.
+CMD ["sleep", "infinity"]

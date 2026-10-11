@@ -159,7 +159,9 @@ tools:
   - name: runpodctl_pod
     description: -<
       Passthrough for `runpodctl pod`.
-      The template `twitter-sentiment-gpu` is custom built and available for training.
+      Pod provisioning/teardown goes through SkyPilot (see the `sky` tool and
+      infra/skypilot/train-clf.yaml) so it gets failover and auto-cleanup;
+      runpodctl is for inspecting/cleaning up pod state only.
     creds: [RUNPOD_API_KEY]
     base_argv: [runpodctl, pod]
 
@@ -184,10 +186,20 @@ tools:
       enabled) so availability problems can be routed around. Runs in this
       gateway, so credentials never reach the agent container; the RunPod API
       key is bind-mounted read-only at ~/.runpod/config.toml (see compose.yaml).
-      Calls are not bounded by a timeout, so streaming modes are fine. For
-      long-lived work prefer non-streaming modes anyway: `sky launch -d`
-      (detach, leaves a cluster) or `sky jobs launch` (managed), then poll
-      with `sky status`/`sky jobs queue`. SkyPilot's local state lives in
-      ~/.sky (persisted volume).
-    creds: [RUNPOD_API_KEY, GIT_TOKEN, MLFLOW_TRACKING_URI, AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET]
+      The Azure/MLflow creds below are forwarded to pods with `--secret NAME`
+      (AZURE_SUBSCRIPTION_ID with `--env NAME`, non-secret) so the task's
+      `setup` data download and MLflow tracking authenticate on the pod;
+      GIT_TOKEN authenticates a private `workdir` repo clone. The agent never
+      sees the values. Calls are not bounded by a timeout, so
+      streaming modes are fine. For long-lived work prefer non-streaming modes
+      anyway: `sky launch -d` (detach, leaves a cluster) or `sky jobs launch`
+      (managed), then poll with `sky status`/`sky jobs queue`. SkyPilot's local
+      state lives in ~/.sky (persisted volume). See docs/ML Twitter/Skypilot.md.
+    creds:
+      - RUNPOD_API_KEY
+      - GIT_TOKEN
+      - AZURE_CLIENT_ID
+      - AZURE_CLIENT_SECRET
+      - AZURE_TENANT_ID
+      - MLFLOW_TRACKING_URI
     base_argv: [sky]

@@ -1,0 +1,65 @@
+# Train the transformer classifier on RunPod via SkyPilot.
+#
+# SkyPilot does the heavy lifting described in docs/ML Twitter/Skypilot.md:
+#   - `workdir` is a git repo, so SkyPilot clones the sources onto the pod
+#     (no image rebuild needed for source edits).
+#   - `setup` downloads the twitter-splits data asset into ./data/splits.
+#   - `run` invokes the LightningCLI training command.
+#   - `resources.autostop` autodowns the pod after the job goes idle, so
+#     nothing is left running/billing.
+#
+# The image (michaelschott00/twitter-sentiment, built from
+# infra/environments/runpod/Dockerfile) ships the pinned deps in /opt/venv.
+#
+# Launch (from the gateway; the values are pulled from the gateway's env, so
+# they never touch the agent):
+#   sky launch -y -c sky-train \
+#     --secret AZURE_CLIENT_ID --secret AZURE_CLIENT_SECRET \
+#     --secret AZURE_TENANT_ID --secret MLFLOW_TRACKING_URI \
+#     --env AZURE_SUBSCRIPTION_ID \
+#     infra/skypilot/train-clf.yaml
+name: sky-train-clf
+
+workdir:
+  url: https://github.com/michaelschott00/twitter-sentiment-analysis.git
+  ref: skypilot
+
+resources:
+  infra: runpod
+  disk_size: 60
+  image_id: docker:michaelschott00/twitter-sentiment:skypilot
+  any_of:
+    - accelerators: L4:1
+    - accelerators: RTX4090:1
+    - accelerators: RTXA4500:1
+    - accelerators: L40S:1
+    - accelerators: A100-80GB:1
+  autostop:
+    idle_minutes: 10
+    down: true
+
+envs:
+  AZURE_RESOURCE_GROUP: rg-twitter-ml
+  AZUREML_WORKSPACE: mlw-twitter-sentiment
+
+# Values are injected at launch via --secret/--env (see header).
+secrets:
+  AZURE_CLIENT_ID: null
+  AZURE_CLIENT_SECRET: null
+  AZURE_TENANT_ID: null
+  MLFLOW_TRACKING_URI: null
+
+setup: |
+  set -euo pipefail
+  /opt/venv/bin/python /usr/local/bin/fetch_splits.py \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --workspace "$AZUREML_WORKSPACE" \
+    --dest data/splits
+
+run: |
+  set -euo pipefail
+  /opt/venv/bin/python -m twitter.main fit \
+    --config configs/tasks/classification.yaml \
+    --config configs/encoders/sentence_bert_base.yaml \
+    --data.init_args.root_dir=./data/splits \
+    --trainer.max_epochs=3

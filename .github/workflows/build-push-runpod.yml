@@ -6,9 +6,8 @@ on:
       - skypilot
     paths:
       # Dependency/image inputs only. Source edits (twitter/**, configs/**)
-      # intentionally do NOT rebuild: the pod clones the repo at start.
+      # intentionally do NOT rebuild: SkyPilot's git workdir clones the repo.
       - "infra/environments/runpod/Dockerfile"
-      - "infra/environments/runpod/run.sh"
       - "infra/environments/runpod/fetch_splits.py"
       - "pyproject.toml"
       - ".github/workflows/build-push-runpod.yml"
